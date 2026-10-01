@@ -1,0 +1,24 @@
+# Environment files & keys
+.env
+.env.*
+*.env
+*.env.local
+*.key
+*.pem
+credentials.json
+token.json
+client_secret*.json
+
+# User resumes, profiles, and uploads
+uploads/
+uploads/*
+!uploads/.gitkeep
+data/
+data/*
+!data/.gitkeep
+*.pdf
+
+# Python bytecode & cache
+__pycache__/
+*.py[cod]
+*.log
