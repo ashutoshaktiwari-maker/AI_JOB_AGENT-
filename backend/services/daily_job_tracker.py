@@ -163,7 +163,7 @@ class DailyJobTracker:
         keyword_counts = {}
 
         for kw in keywords:
-            found = JobSearchService.search(keyword=kw, portal="All Portals", max_total=10)
+            found = JobSearchService.search(keyword=kw, portal="All Sources (India Eligible)", max_total=15)
             count = 0
             for j in found:
                 url = j.get("url") or f"{j.get('company')}_{j.get('title')}"
@@ -174,7 +174,7 @@ class DailyJobTracker:
             keyword_counts[kw] = count
 
             # Log search event for each keyword
-            cls.log_search(keyword=kw, portal="All Portals", jobs_count=count, email=target_email)
+            cls.log_search(keyword=kw, portal="All Sources (India Eligible)", jobs_count=count, email=target_email)
 
         scan_result = {
             "date": today_str,

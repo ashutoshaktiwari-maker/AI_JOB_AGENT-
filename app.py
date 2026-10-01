@@ -167,6 +167,38 @@ html, body, [class*="css"] {
     color: #6B21A8;
     border: 1px solid #E9D5FF;
 }
+.portal-greenhouse {
+    background: #ECFDF5;
+    color: #065F46;
+    border: 1px solid #A7F3D0;
+}
+.portal-ashby {
+    background: #F5F3FF;
+    color: #6D28D9;
+    border: 1px solid #DDD6FE;
+}
+.portal-himalayas {
+    background: #FFFBEB;
+    color: #92400E;
+    border: 1px solid #FDE68A;
+}
+.portal-weworkremotely {
+    background: #FFF1F2;
+    color: #9F1239;
+    border: 1px solid #FECDD3;
+}
+.badge-india-eligible {
+    display: inline-block;
+    padding: 0.18rem 0.55rem;
+    border-radius: 6px;
+    background: #F0FDF4;
+    color: #15803D;
+    border: 1px solid #BBF7D0;
+    font-size: 0.74rem;
+    font-weight: 700;
+    margin-right: 0.35rem;
+    vertical-align: middle;
+}
 
 /* Daily Tracking Info Box */
 .tracking-banner {
@@ -389,8 +421,8 @@ if menu == "Upload Resume":
 elif menu == "Search Jobs":
     st.markdown("""
     <div class="hero-banner">
-        <h1>🔍 Multi-Portal Job Search & Daily Tracking</h1>
-        <p>Real-time opportunities aggregated across verified hiring portals with active keyword tracking for <b>ashutosh.aktiwari@gmail.com</b>.</p>
+        <h1>🔍 Multi-Source Job Search & Target Company Pipeline</h1>
+        <p>Live ingestion from remote-first target companies (<b>GitLab, Supabase, Canonical, Zapier, Wikimedia, Remote.com</b>) and verified aggregators (<b>Himalayas, WeWorkRemotely, Remotive, RemoteOK</b>) with strict <b>India eligibility filtering</b>.</p>
     </div>
     """, unsafe_allow_html=True)
 
@@ -402,17 +434,23 @@ elif menu == "Search Jobs":
     <div class="tracking-banner">
         <div style="display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px;">
             <div>
-                <span style="font-size: 0.8rem; font-weight: 700; color: #4F46E5; text-transform: uppercase; letter-spacing: 0.05em;">● Daily Tracker Active</span>
+                <span style="font-size: 0.8rem; font-weight: 700; color: #4F46E5; text-transform: uppercase; letter-spacing: 0.05em;">● India Candidate Tracker Active</span>
                 <div style="font-size: 1.15rem; font-weight: 800; color: #1E293B; margin-top: 2px;">
                     Tracking for: <u>{tracked_email}</u>
                 </div>
             </div>
-            <div style="display: flex; gap: 8px; flex-wrap: wrap; align-items: center;">
-                <span style="font-size: 0.8rem; font-weight: 600; color: #64748B;">Active Portals:</span>
+            <div style="display: flex; gap: 6px; flex-wrap: wrap; align-items: center;">
+                <span class="badge-india-eligible">🇮🇳 India Eligible</span>
+                <span class="portal-badge portal-greenhouse">🏛️ Greenhouse</span>
+                <span class="portal-badge portal-ashby">⚡ Ashby</span>
+                <span class="portal-badge portal-himalayas">🏔️ Himalayas</span>
+                <span class="portal-badge portal-weworkremotely">💼 WWR</span>
+                <span class="portal-badge portal-remotive">🎯 Remotive</span>
                 <span class="portal-badge portal-remoteok">🌐 RemoteOK</span>
-                <span class="portal-badge portal-remotive">💼 Remotive</span>
-                <span class="portal-badge portal-arbeitnow">⚡ Arbeitnow</span>
             </div>
+        </div>
+        <div style="margin-top: 0.6rem; font-size: 0.82rem; color: #64748B;">
+            <b>Target Companies Monitored:</b> GitLab &bull; Canonical &bull; Supabase &bull; Zapier &bull; Wikimedia &bull; Remote.com &bull; Automattic &bull; Deel &bull; Postman &bull; DuckDuckGo
         </div>
     </div>
     """, unsafe_allow_html=True)
@@ -428,22 +466,22 @@ elif menu == "Search Jobs":
 
     with kw_cols[-1]:
         if st.button("⚡ Scan All Today", type="secondary", use_container_width=True, help="Scan all tracked keywords across all portals right now"):
-            with st.spinner(f"Running automated daily scan across all portals for {tracked_email}..."):
+            with st.spinner(f"Running automated daily scan across target companies & feeds for {tracked_email}..."):
                 scan_res = DailyJobTracker.run_daily_scan(email=tracked_email)
                 st.session_state["jobs"] = scan_res.get("jobs", [])
-                st.session_state["last_searched_portal"] = "All Portals"
+                st.session_state["last_searched_portal"] = "All Sources (India Eligible)"
                 st.success(f"✅ Daily scan complete! Discovered {scan_res.get('total_jobs_found', 0)} opportunities.")
 
     st.write("")
 
     # Search Bar Inputs
-    col_q, col_portal, col_btn = st.columns([3.5, 1.5, 1], gap="medium")
+    col_q, col_portal, col_btn = st.columns([3.5, 1.7, 1], gap="medium")
     with col_q:
         current_kw = st.session_state.get("current_search_kw", "Python AI")
         search_query = st.text_input("Keywords, Skills, or Job Title", value=current_kw, placeholder="e.g. Python AI, AI Automation, AI Agents...")
     with col_portal:
         portal_options = JobSearchService.PORTALS
-        selected_portal = st.selectbox("Search Portal", portal_options, index=0)
+        selected_portal = st.selectbox("Search Feed / Category", portal_options, index=0)
     with col_btn:
         st.write("")
         st.write("")
@@ -451,8 +489,8 @@ elif menu == "Search Jobs":
 
     if do_search:
         st.session_state["current_search_kw"] = search_query
-        with st.spinner(f"Querying [{selected_portal}] for '{search_query}'..."):
-            jobs = JobSearchService.search(keyword=search_query, portal=selected_portal, max_total=30)
+        with st.spinner(f"Querying [{selected_portal}] for '{search_query}' (India Verified)..."):
+            jobs = JobSearchService.search(keyword=search_query, portal=selected_portal, max_total=50)
             st.session_state["jobs"] = jobs
             st.session_state["last_searched_portal"] = selected_portal
             DailyJobTracker.log_search(
@@ -465,13 +503,33 @@ elif menu == "Search Jobs":
     # Job Results
     if st.session_state.get("jobs"):
         jobs_list = st.session_state["jobs"]
-        portal_searched = st.session_state.get("last_searched_portal", "All Portals")
-        st.markdown(f"### Found **{len(jobs_list)}** Positions *(Source: {portal_searched})*")
+        portal_searched = st.session_state.get("last_searched_portal", "All Sources (India Eligible)")
+        st.markdown(f"### Found **{len(jobs_list)}** Positions *(Filter: {portal_searched})*")
 
         for idx, job in enumerate(jobs_list):
             portal_name = job.get("portal", "RemoteOK")
-            badge_class = f"portal-{portal_name.lower()}"
-            badge_icon = "🌐" if portal_name == "RemoteOK" else ("💼" if portal_name == "Remotive" else "⚡")
+            p_low = portal_name.lower()
+            if "greenhouse" in p_low:
+                badge_class = "portal-greenhouse"
+                badge_icon = "🏛️"
+            elif "ashby" in p_low:
+                badge_class = "portal-ashby"
+                badge_icon = "⚡"
+            elif "himalayas" in p_low:
+                badge_class = "portal-himalayas"
+                badge_icon = "🏔️"
+            elif "weworkremotely" in p_low:
+                badge_class = "portal-weworkremotely"
+                badge_icon = "💼"
+            elif "remoteok" in p_low:
+                badge_class = "portal-remoteok"
+                badge_icon = "🌐"
+            elif "remotive" in p_low:
+                badge_class = "portal-remotive"
+                badge_icon = "🎯"
+            else:
+                badge_class = "portal-arbeitnow"
+                badge_icon = "🔍"
 
             with st.container():
                 c_details, c_actions = st.columns([4, 1.3], gap="medium")
@@ -479,6 +537,7 @@ elif menu == "Search Jobs":
                     st.markdown(f"""
                     <div style="display: flex; align-items: center; gap: 8px; margin-bottom: 4px; flex-wrap: wrap;">
                         <span class="portal-badge {badge_class}">{badge_icon} {portal_name}</span>
+                        <span class="badge-india-eligible">🇮🇳 India Eligible</span>
                         <span style="font-size: 1.15rem; font-weight: 700; color: #1E293B;">{job.get('title')}</span>
                         <span style="color: #64748B; font-weight: 600;">@ {job.get('company')}</span>
                     </div>
@@ -486,14 +545,15 @@ elif menu == "Search Jobs":
 
                     tags_html = "".join([f'<span class="skill-tag-general">{t}</span>' for t in job.get('tags', [])[:5]])
                     loc_text = job.get('location', 'Remote')
-                    st.markdown(f"📍 `{loc_text}` &nbsp; {tags_html}", unsafe_allow_html=True)
+                    date_info = f"&nbsp;&bull;&nbsp; 🗓️ `{job.get('date_posted')}`" if job.get('date_posted') else ""
+                    st.markdown(f"📍 `{loc_text}` &nbsp; {tags_html} {date_info}", unsafe_allow_html=True)
 
                 with c_actions:
                     if st.button(f"🎯 Target Job", key=f"job_btn_{idx}_{portal_name}", use_container_width=True):
                         st.session_state["selected_job"] = job
                         st.success(f"Selected: {job.get('title')}")
                     if job.get("url"):
-                        st.markdown(f"[🔗 View on {portal_name}]({job.get('url')})")
+                        st.markdown(f"[🔗 View Original Posting]({job.get('url')})")
 
                 st.markdown("<hr style='margin: 0.8rem 0; border: none; border-top: 1px solid #E2E8F0;'>", unsafe_allow_html=True)
 
