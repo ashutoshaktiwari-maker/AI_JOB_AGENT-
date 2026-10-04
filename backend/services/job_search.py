@@ -1,458 +1,884 @@
 """
-Multi-Source Job Search & Target Company Pipeline.
+Unified Zero-Login Multi-Source Job Search & Target Company Scraper.
 
-Ingests job postings from:
-1. Target Companies & Public ATS Endpoints:
-   - Greenhouse: GitLab, Automattic, Canonical, DuckDuckGo, Wikimedia, Postman, Deel, Remote.com
-   - Ashby: Supabase, Zapier, Deel
-2. Aggregators:
-   - Remotive (https://remotive.com/api/remote-jobs)
-   - RemoteOK (https://remoteok.com/api)
-   - Himalayas (https://himalayas.app/jobs/api?country=India)
-   - We Work Remotely RSS (https://weworkremotely.com/categories/remote-programming-jobs.rss)
+Ingests job postings from endpoints requiring NO user authentication or registration:
+1. Greenhouse Public APIs:
+   gitlab, canonical, automattic, duckduckgo, wikimedia, remotecom, postman, elastic, cockroachlabs, github
+   Endpoint: https://boards-api.greenhouse.io/v1/boards/{company}/jobs?content=true
+2. Ashby Public APIs:
+   supabase, zapier, deel, openai, replit, linear, anysphere
+   Endpoint: https://api.ashbyhq.com/posting-api/job-board/{company}
+3. Lever Public APIs:
+   palantir, kinsta, buffer, auth0
+   Endpoint: https://api.lever.co/v0/postings/{company}?mode=json
+4. Public Aggregator APIs:
+   - Jobicy: https://jobicy.com/api/v2/remote-jobs?count=50&geo=apac
+   - Remotive: https://remotive.com/api/remote-jobs?search={keyword}
+   - RemoteOK: https://remoteok.com/api?tag={keyword}
+   - Himalayas: https://himalayas.app/jobs/api?country=India
+   - Arbeitnow: https://www.arbeitnow.com/api/job-board-api
+5. RSS Feeds:
+   - WeWorkRemotely: https://weworkremotely.com/categories/remote-programming-jobs.rss
+   - Dev.to: https://dev.to/feed/tag/jobs
 
-Applies strict filtering for India-based / worldwide remote candidates:
-- Includes: India, Worldwide, Anywhere, Global, APAC, Asia, or open Remote.
-- Excludes: US Citizen, W2 Only, US/EU Only, C2C, or Must reside in [US/UK/Canada].
+Applies strict filtering for India remote candidates:
+- ALLOW if location or body includes: "india", "worldwide", "anywhere", "global", "apac", "remote".
+- REJECT if description contains: "us citizen", "w2 only", "us/eu only", "c2c", "must reside in us", "us only", "uk only", "canada only".
+- REJECT legacy friction ATS URLs: skip links with "myworkdayjobs.com" or "taleo.net".
+
+Normalizes every job dictionary to:
+{"id": str, "title": str, "company": str, "url": str, "location": str, "description": str, "portal": str}
 """
 
+import hashlib
+import html
 import logging
 import re
+import threading
 import time
-import xml.etree.ElementTree as ET
 from concurrent.futures import ThreadPoolExecutor, as_completed
 from typing import Any, Dict, List, Optional
+import feedparser
 import requests
 
 logger = logging.getLogger(__name__)
 
-# Cache store: {cache_key: (timestamp, [jobs])}
-_IN_MEMORY_CACHE: Dict[str, tuple[float, List[Dict[str, Any]]]] = {}
-CACHE_TTL_SECONDS = 600  # 10 minutes cache to keep search instantaneous
+# In-memory cache: {cache_key: (timestamp, [jobs])}
+_IN_MEMORY_CACHE: Dict[str, tuple[float, List[Dict[str, str]]]] = {}
+_CACHE_LOCK = threading.Lock()
+CACHE_TTL_SECONDS = 600  # 10 minutes cache
 
-# ----------------- FILTERING RULES -----------------
+DEFAULT_HEADERS = {
+    "User-Agent": "Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36",
+    "Accept": "application/json, application/xml, text/xml, */*",
+}
+DEFAULT_TIMEOUT = 8  # seconds
 
-INCLUDE_LOCATIONS = [
+# ---------------- FILTERING RULES ----------------
+
+ALLOW_TERMS = [
     "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad", "pune",
     "gurgaon", "gurugram", "noida", "chennai", "kolkata", "ahmedabad",
-    "worldwide", "anywhere", "global", "apac", "asia", "remote",
-    "remote - global", "remote (worldwide)", "remote, worldwide", "remote - worldwide",
-    "all locations", "everywhere"
+    "worldwide", "anywhere", "global", "apac", "asia", "remote"
 ]
 
 EXCLUDE_PATTERNS = [
-    r"\bus citizen\b",
-    r"\bw2 only\b",
-    r"\bus/eu only\b",
-    r"\bus only\b",
-    r"\bu\.s\. only\b",
+    r"\bus\s+citizen(?:s)?\b",
+    r"\bu\.s\.\s+citizen(?:s)?\b",
+    r"\bw2\s+only\b",
+    r"\bus\s*/\s*eu\s+only\b",
+    r"\bus\s+only\b",
+    r"\bu\.s\.\s+only\b",
     r"\bc2c\b",
-    r"\bcorp to corp\b",
-    r"\bmust reside in (?:the )?(?:us|usa|united states|uk|united kingdom|canada|eu|europe)\b",
-    r"\bonly open to residents of (?:the )?(?:us|usa|united states|uk|canada)\b",
-    r"\bus citizenship required\b",
-    r"\b(amer|latam|emea|da-ch) only\b",
+    r"\bcorp(?:orate)?\s+to\s+corp(?:orate)?\b",
+    r"\bmust\s+reside\s+in\s+(?:the\s+)?(?:us|u\.s\.|usa|united\s+states|uk|u\.k\.|canada)\b",
+    r"\bonly\s+open\s+to\s+residents\s+of\s+(?:the\s+)?(?:us|u\.s\.|usa|united\s+states|uk|u\.k\.|canada)\b",
+    r"\buk\s+only\b",
+    r"\bu\.k\.\s+only\b",
+    r"\bcanada\s+only\b",
 ]
 
 RESTRICTED_NON_INDIA = [
     "united states", "usa", "us only", "canada only", "uk only", "germany only",
     "brazil", "latin america", "remote - amer", "remote, amer", "remote - emea",
-    "remote - dach", "namer", "latam", "emea only"
+    "remote - dach", "namer", "latam", "emea only",
+]
+
+DISALLOWED_URL_SUBSTRINGS = [
+    "myworkdayjobs.com",
+    "taleo.net",
 ]
 
 
 def clean_html(raw_html: str) -> str:
-    """Strips HTML tags and normalizes whitespace."""
+    """Strips HTML tags, unescapes HTML entities, and normalizes whitespace."""
     if not raw_html:
         return ""
-    clean = re.sub(r"<[^>]+>", " ", raw_html)
-    clean = re.sub(r"\s+", " ", clean).strip()
-    return clean
+    text = re.sub(r"<[^>]+>", " ", str(raw_html))
+    text = html.unescape(text)
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
 
 
-def is_eligible_for_india(location: str, title: str = "", description: str = "") -> bool:
+def is_eligible_for_india(
+    location: str = "",
+    title_or_desc: str = "",
+    desc_or_url: str = "",
+    url_or_title: str = "",
+    **kwargs: Any,
+) -> bool:
     """
     Evaluates whether a job position is open to candidates located in India.
-    Includes: India, Worldwide, Anywhere, Global, APAC, or open Remote.
-    Excludes: US Citizen, W2 Only, US/EU Only, C2C, or Must reside in [US/UK/Canada].
+    Supports both positional (location, title, description) and keyword signatures.
+    - REJECT if URL points to legacy high-friction ATS ('myworkdayjobs.com', 'taleo.net').
+    - REJECT if description or location contains US/EU/W2/C2C residency restrictions.
+    - ALLOW if location or body includes: "india", "worldwide", "anywhere", "global", "apac", "remote".
     """
-    loc = (location or "").lower().strip()
-    full_text = f"{loc} {title} {description}".lower()
+    all_texts = [
+        str(x or "")
+        for x in [location, title_or_desc, desc_or_url, url_or_title]
+        + list(kwargs.values())
+    ]
 
-    # 1. Strict Exclusions
+    # 1. Reject legacy friction ATS URLs
+    for text in all_texts:
+        t_low = text.lower()
+        for bad_url in DISALLOWED_URL_SUBSTRINGS:
+            if bad_url in t_low:
+                return False
+
+    loc_lower = (location or "").lower().strip()
+    full_text = " ".join(t.lower() for t in all_texts)
+
+    # 2. Strict exclusions
     for pattern in EXCLUDE_PATTERNS:
         if re.search(pattern, full_text):
             return False
 
-    # 2. Check if explicitly restricted to a foreign country or non-India territory
+    # 3. Explicitly restricted non-India territory check on location
     has_global_or_india = any(
-        k in loc for k in ["india", "bangalore", "mumbai", "delhi", "hyderabad", "pune", "worldwide", "anywhere", "global", "apac", "asia"]
+        k in loc_lower
+        for k in [
+            "india", "bangalore", "bengaluru", "mumbai", "delhi", "hyderabad",
+            "pune", "worldwide", "anywhere", "global", "apac", "asia"
+        ]
     )
     if not has_global_or_india:
         for r_loc in RESTRICTED_NON_INDIA:
-            if r_loc in loc:
+            if r_loc in loc_lower:
                 return False
 
-    # 3. Acceptance Criteria
-    if not loc or loc == "remote":
-        return True
+    # 4. Acceptance criteria: Must contain at least one allowed term
+    return any(term in full_text for term in ALLOW_TERMS)
 
-    return any(k in loc for k in INCLUDE_LOCATIONS)
+
+def normalize_job(
+    id_: Any,
+    title: Any,
+    company: Any,
+    url: Any,
+    location: Any,
+    description: Any,
+    portal: Any,
+) -> Dict[str, str]:
+    """
+    Normalizes a job dictionary strictly to the required schema:
+    {"id": str, "title": str, "company": str, "url": str, "location": str, "description": str, "portal": str}
+    """
+    clean_desc = clean_html(str(description or ""))
+    str_url = str(url or "").strip()
+    str_company = str(company or "").strip() or "Unknown"
+    str_title = str(title or "").strip() or "Untitled Role"
+    str_loc = str(location or "").strip() or "Remote"
+    str_portal = str(portal or "").strip() or "Unknown"
+
+    str_id = str(id_ or "").strip()
+    if not str_id:
+        str_id = hashlib.sha256(f"{str_company}_{str_title}_{str_url}".encode("utf-8")).hexdigest()[:16]
+
+    return {
+        "id": str_id,
+        "title": str_title,
+        "company": str_company,
+        "url": str_url,
+        "location": str_loc,
+        "description": clean_desc,
+        "portal": str_portal,
+    }
+
+
+def _matches_keyword(job: Dict[str, str], keyword: str) -> bool:
+    """Checks if job matches keyword query (case-insensitive substring or all tokens)."""
+    if not keyword:
+        return True
+    kw = keyword.lower().strip()
+    tokens = kw.split()
+    target = f"{job['title']} {job['company']} {job['description']}".lower()
+    return (kw in target) or all(t in target for t in tokens)
 
 
 class JobSearchService:
-    """High-performance aggregator for target companies and remote job boards."""
+    """Unified zero-login multi-source scraper and search aggregator."""
 
     PORTALS = [
         "All Sources (India Eligible)",
-        "Target Companies (GitLab, Supabase, Canonical, Zapier...)",
+        "Target Companies (Greenhouse / Ashby / Lever)",
+        "Jobicy (APAC / Remote)",
         "Himalayas (India)",
         "WeWorkRemotely",
         "Remotive",
         "RemoteOK",
+        "Arbeitnow",
+        "Dev.to",
     ]
 
-    # Target Companies on Greenhouse
-    TARGET_GREENHOUSE_COMPANIES = [
+    GREENHOUSE_COMPANIES = [
         {"name": "GitLab", "board": "gitlab"},
-        {"name": "Automattic", "board": "automattic"},
         {"name": "Canonical", "board": "canonical"},
+        {"name": "Automattic", "board": "automattic"},
         {"name": "DuckDuckGo", "board": "duckduckgo"},
         {"name": "Wikimedia Foundation", "board": "wikimedia"},
-        {"name": "Postman", "board": "postman"},
-        {"name": "Deel", "board": "deel"},
         {"name": "Remote.com", "board": "remotecom"},
+        {"name": "Postman", "board": "postman"},
+        {"name": "Elastic", "board": "elastic"},
+        {"name": "Cockroach Labs", "board": "cockroachlabs"},
+        {"name": "GitHub", "board": "github"},
     ]
 
-    # Target Companies on Ashby
-    TARGET_ASHBY_COMPANIES = [
+    ASHBY_COMPANIES = [
         {"name": "Supabase", "board": "supabase"},
         {"name": "Zapier", "board": "zapier"},
-        {"name": "Deel (Ashby)", "board": "deel"},
+        {"name": "Deel", "board": "deel"},
+        {"name": "OpenAI", "board": "openai"},
+        {"name": "Replit", "board": "replit"},
+        {"name": "Linear", "board": "linear"},
+        {"name": "Anysphere", "board": "anysphere"},
     ]
 
+    LEVER_COMPANIES = [
+        {"name": "Palantir", "board": "palantir"},
+        {"name": "Kinsta", "board": "kinsta"},
+        {"name": "Buffer", "board": "buffer"},
+        {"name": "Auth0", "board": "auth0"},
+    ]
+
+    # Backward compatibility aliases
+    TARGET_GREENHOUSE_COMPANIES = GREENHOUSE_COMPANIES
+    TARGET_ASHBY_COMPANIES = ASHBY_COMPANIES
+    TARGET_LEVER_COMPANIES = LEVER_COMPANIES
+
+    # ---------------- 1. GREENHOUSE PUBLIC APIS ----------------
+
     @classmethod
-    def _fetch_greenhouse_board(cls, company_name: str, board_token: str) -> List[Dict[str, Any]]:
-        """Fetches all jobs for a target company via public Greenhouse API."""
+    def _fetch_greenhouse_board(cls, company_name: str, board_token: str) -> List[Dict[str, str]]:
         cache_key = f"gh_{board_token}"
-        cached = _IN_MEMORY_CACHE.get(cache_key)
         now = time.time()
-        if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
-            return cached[1]
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                return cached[1]
 
         url = f"https://boards-api.greenhouse.io/v1/boards/{board_token}/jobs?content=true"
-        jobs: List[Dict[str, Any]] = []
+        jobs: List[Dict[str, str]] = []
         try:
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=7)
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
             if resp.status_code == 200:
                 data = resp.json()
                 for item in data.get("jobs", []):
                     title = item.get("title", "")
-                    content = clean_html(item.get("content", ""))
-                    loc_name = item.get("location", {}).get("name") or "Remote"
+                    content = item.get("content", "")
+                    loc = item.get("location", {}).get("name") or "Remote"
                     url_job = item.get("absolute_url") or ""
+                    job_id = str(item.get("id") or "")
 
-                    if is_eligible_for_india(loc_name, title, content):
-                        jobs.append({
-                            "portal": f"Greenhouse ({company_name})",
-                            "company": company_name,
-                            "title": title,
-                            "location": loc_name,
-                            "url": url_job,
-                            "tags": [company_name, "Greenhouse", "India Eligible"],
-                            "description": content,
-                            "date_posted": item.get("updated_at", ""),
-                            "eligible_for_india": True,
-                            "source_type": "Target Company",
-                        })
+                    if is_eligible_for_india(loc, content, url_job, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=company_name,
+                                url=url_job,
+                                location=loc,
+                                description=content,
+                                portal=f"Greenhouse ({company_name})",
+                            )
+                        )
             elif resp.status_code != 404:
                 logger.debug("Greenhouse board %s status %d", board_token, resp.status_code)
         except Exception as e:
             logger.debug("Greenhouse board %s error: %s", board_token, e)
 
-        _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
         return jobs
 
     @classmethod
-    def _fetch_ashby_board(cls, company_name: str, board_token: str) -> List[Dict[str, Any]]:
-        """Fetches all jobs for a target company via public Ashby API."""
+    def fetch_all_greenhouse(cls, keyword: str = "") -> List[Dict[str, str]]:
+        results: List[Dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=10) as executor:
+            futures = [
+                executor.submit(cls._fetch_greenhouse_board, co["name"], co["board"])
+                for co in cls.GREENHOUSE_COMPANIES
+            ]
+            for f in as_completed(futures):
+                try:
+                    results.extend(f.result())
+                except Exception as e:
+                    logger.debug("Error in greenhouse task: %s", e)
+        if keyword:
+            results = [j for j in results if _matches_keyword(j, keyword)]
+        return results
+
+    # ---------------- 2. ASHBY PUBLIC APIS ----------------
+
+    @classmethod
+    def _fetch_ashby_board(cls, company_name: str, board_token: str) -> List[Dict[str, str]]:
         cache_key = f"ashby_{board_token}"
-        cached = _IN_MEMORY_CACHE.get(cache_key)
         now = time.time()
-        if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
-            return cached[1]
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                return cached[1]
 
         url = f"https://api.ashbyhq.com/posting-api/job-board/{board_token}"
-        jobs: List[Dict[str, Any]] = []
+        jobs: List[Dict[str, str]] = []
         try:
-            resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=7)
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
             if resp.status_code == 200:
                 data = resp.json()
                 for item in data.get("jobs", []):
                     title = item.get("title", "")
-                    desc = clean_html(item.get("descriptionHtml", ""))
-                    loc_name = item.get("location") or "Remote"
+                    desc = item.get("descriptionHtml") or item.get("descriptionPlain") or ""
+                    loc = item.get("location") or "Remote"
                     url_job = item.get("jobUrl") or ""
+                    job_id = str(item.get("id") or "")
 
-                    if is_eligible_for_india(loc_name, title, desc):
-                        jobs.append({
-                            "portal": f"Ashby ({company_name})",
-                            "company": company_name,
-                            "title": title,
-                            "location": loc_name,
-                            "url": url_job,
-                            "tags": [company_name, "Ashby", "India Eligible"],
-                            "description": desc,
-                            "date_posted": item.get("publishedAt", ""),
-                            "eligible_for_india": True,
-                            "source_type": "Target Company",
-                        })
+                    if is_eligible_for_india(loc, desc, url_job, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=company_name,
+                                url=url_job,
+                                location=loc,
+                                description=desc,
+                                portal=f"Ashby ({company_name})",
+                            )
+                        )
+            elif resp.status_code != 404:
+                logger.debug("Ashby board %s status %d", board_token, resp.status_code)
         except Exception as e:
             logger.debug("Ashby board %s error: %s", board_token, e)
 
-        _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
         return jobs
 
     @classmethod
-    def fetch_himalayas(cls, keyword: str = "") -> List[Dict[str, Any]]:
-        """Fetches India-eligible remote positions from Himalayas API."""
-        cache_key = "himalayas_india"
-        cached = _IN_MEMORY_CACHE.get(cache_key)
-        now = time.time()
-        raw_jobs = []
+    def fetch_all_ashby(cls, keyword: str = "") -> List[Dict[str, str]]:
+        results: List[Dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=7) as executor:
+            futures = [
+                executor.submit(cls._fetch_ashby_board, co["name"], co["board"])
+                for co in cls.ASHBY_COMPANIES
+            ]
+            for f in as_completed(futures):
+                try:
+                    results.extend(f.result())
+                except Exception as e:
+                    logger.debug("Error in ashby task: %s", e)
+        if keyword:
+            results = [j for j in results if _matches_keyword(j, keyword)]
+        return results
 
-        if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
-            raw_jobs = cached[1]
-        else:
-            url = "https://himalayas.app/jobs/api?country=India"
-            try:
-                resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-                if resp.status_code == 200:
-                    data = resp.json()
-                    for item in data.get("jobs", []):
-                        title = item.get("title", "")
-                        desc = clean_html(item.get("description", ""))
-                        loc = item.get("location") or "India (Remote)"
-                        cats = [c.get("name") for c in item.get("categories", []) if isinstance(c, dict)] or item.get("categories") or []
-
-                        if is_eligible_for_india(loc, title, desc):
-                            raw_jobs.append({
-                                "portal": "Himalayas",
-                                "company": item.get("companyName") or "Unknown",
-                                "title": title,
-                                "location": loc,
-                                "url": item.get("applicationLink") or item.get("url") or "",
-                                "tags": list(cats) + ["India Eligible"],
-                                "description": desc,
-                                "date_posted": item.get("pubDate", ""),
-                                "eligible_for_india": True,
-                                "source_type": "Aggregator",
-                            })
-                    _IN_MEMORY_CACHE[cache_key] = (now, raw_jobs)
-            except Exception as e:
-                logger.warning("Himalayas fetch failed: %s", e)
-
-        if not keyword:
-            return raw_jobs
-        return [
-            j for j in raw_jobs
-            if keyword.lower() in f"{j['title']} {j['company']} {j['description']} {' '.join(j.get('tags', []))}".lower()
-        ]
+    # ---------------- 3. LEVER PUBLIC APIS ----------------
 
     @classmethod
-    def fetch_wwr(cls, keyword: str = "") -> List[Dict[str, Any]]:
-        """Fetches remote programming roles from We Work Remotely RSS feed."""
-        cache_key = "wwr_rss"
-        cached = _IN_MEMORY_CACHE.get(cache_key)
+    def _fetch_lever_board(cls, company_name: str, board_token: str) -> List[Dict[str, str]]:
+        cache_key = f"lever_{board_token}"
         now = time.time()
-        raw_jobs = []
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                return cached[1]
 
-        if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
-            raw_jobs = cached[1]
-        else:
-            url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
-            try:
-                resp = requests.get(url, headers={"User-Agent": "Mozilla/5.0"}, timeout=8)
-                if resp.status_code == 200:
-                    root = ET.fromstring(resp.content)
-                    channel = root.find("channel")
-                    items = channel.findall("item") if channel is not None else []
-                    for it in items:
-                        raw_title = it.findtext("title") or ""
-                        company = "Unknown"
-                        title = raw_title
-                        if ":" in raw_title:
-                            parts = raw_title.split(":", 1)
-                            company = parts[0].strip()
-                            title = parts[1].strip()
-
-                        desc = clean_html(it.findtext("description") or "")
-                        link = it.findtext("link") or ""
-                        loc = "Worldwide (Remote)"
-                        pub = it.findtext("pubDate") or ""
-
-                        if is_eligible_for_india(loc, title, desc):
-                            raw_jobs.append({
-                                "portal": "WeWorkRemotely",
-                                "company": company,
-                                "title": title,
-                                "location": loc,
-                                "url": link,
-                                "tags": ["WeWorkRemotely", "Remote", "India Eligible"],
-                                "description": desc,
-                                "date_posted": pub,
-                                "eligible_for_india": True,
-                                "source_type": "Aggregator",
-                            })
-                    _IN_MEMORY_CACHE[cache_key] = (now, raw_jobs)
-            except Exception as e:
-                logger.warning("WeWorkRemotely fetch failed: %s", e)
-
-        if not keyword:
-            return raw_jobs
-        return [
-            j for j in raw_jobs
-            if keyword.lower() in f"{j['title']} {j['company']} {j['description']}".lower()
-        ]
-
-    @classmethod
-    def fetch_remotive(cls, keyword: str = "") -> List[Dict[str, Any]]:
-        """Queries Remotive API for remote roles."""
-        url = f"https://remotive.com/api/remote-jobs?search={requests.utils.quote(keyword)}&limit=25" if keyword else "https://remotive.com/api/remote-jobs?limit=25"
-        jobs: List[Dict[str, Any]] = []
+        url = f"https://api.lever.co/v0/postings/{board_token}?mode=json"
+        jobs: List[Dict[str, str]] = []
         try:
-            resp = requests.get(url, timeout=9)
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                if isinstance(data, list):
+                    for item in data:
+                        title = item.get("text", "")
+                        desc = item.get("descriptionPlain") or item.get("description") or ""
+                        categories = item.get("categories") or {}
+                        loc = categories.get("location") or "Remote"
+                        url_job = item.get("hostedUrl") or item.get("applyUrl") or ""
+                        job_id = str(item.get("id") or "")
+
+                        if is_eligible_for_india(loc, desc, url_job, title):
+                            jobs.append(
+                                normalize_job(
+                                    id_=job_id,
+                                    title=title,
+                                    company=company_name,
+                                    url=url_job,
+                                    location=loc,
+                                    description=desc,
+                                    portal=f"Lever ({company_name})",
+                                )
+                            )
+            elif resp.status_code != 404:
+                logger.debug("Lever board %s status %d", board_token, resp.status_code)
+        except Exception as e:
+            logger.debug("Lever board %s error: %s", board_token, e)
+
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        return jobs
+
+    @classmethod
+    def fetch_all_lever(cls, keyword: str = "") -> List[Dict[str, str]]:
+        results: List[Dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [
+                executor.submit(cls._fetch_lever_board, co["name"], co["board"])
+                for co in cls.LEVER_COMPANIES
+            ]
+            for f in as_completed(futures):
+                try:
+                    results.extend(f.result())
+                except Exception as e:
+                    logger.debug("Error in lever task: %s", e)
+        if keyword:
+            results = [j for j in results if _matches_keyword(j, keyword)]
+        return results
+
+    # ---------------- 4. PUBLIC AGGREGATOR APIS ----------------
+
+    @classmethod
+    def fetch_jobicy(cls, keyword: str = "") -> List[Dict[str, str]]:
+        cache_key = "agg_jobicy"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                jobs = cached[1]
+                return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+        url = "https://jobicy.com/api/v2/remote-jobs?count=50&geo=apac"
+        jobs: List[Dict[str, str]] = []
+        try:
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data.get("jobs", []):
+                    title = item.get("jobTitle", "")
+                    desc = item.get("jobDescription", "")
+                    comp = item.get("companyName") or "Unknown"
+                    loc = item.get("jobGeo") or item.get("jobLocation") or "APAC (Remote)"
+                    url_job = item.get("url") or ""
+                    job_id = str(item.get("id") or "")
+
+                    if is_eligible_for_india(loc, desc, url_job, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=comp,
+                                url=url_job,
+                                location=loc,
+                                description=desc,
+                                portal="Jobicy",
+                            )
+                        )
+        except Exception as e:
+            logger.warning("Jobicy fetch failed: %s", e)
+
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+    @classmethod
+    def fetch_remotive(cls, keyword: str = "") -> List[Dict[str, str]]:
+        cache_key = f"agg_remotive_{keyword.strip().lower()}" if keyword else "agg_remotive_all"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                return cached[1]
+
+        if keyword:
+            url = f"https://remotive.com/api/remote-jobs?search={requests.utils.quote(keyword)}&limit=50"
+        else:
+            url = "https://remotive.com/api/remote-jobs?limit=50"
+
+        jobs: List[Dict[str, str]] = []
+        try:
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
             if resp.status_code == 200:
                 data = resp.json()
                 for item in data.get("jobs", []):
                     title = item.get("title", "")
+                    desc = item.get("description", "")
+                    comp = item.get("company_name") or "Unknown"
                     loc = item.get("candidate_required_location") or "Remote"
-                    desc = clean_html(item.get("description", ""))
-                    if is_eligible_for_india(loc, title, desc):
-                        jobs.append({
-                            "portal": "Remotive",
-                            "company": item.get("company_name", "Unknown"),
-                            "title": title,
-                            "location": loc,
-                            "url": item.get("url") or "",
-                            "tags": item.get("tags", []) + ["India Eligible"],
-                            "description": desc,
-                            "date_posted": item.get("publication_date", ""),
-                            "eligible_for_india": True,
-                            "source_type": "Aggregator",
-                        })
+                    url_job = item.get("url") or ""
+                    job_id = str(item.get("id") or "")
+
+                    if is_eligible_for_india(loc, desc, url_job, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=comp,
+                                url=url_job,
+                                location=loc,
+                                description=desc,
+                                portal="Remotive",
+                            )
+                        )
         except Exception as e:
             logger.warning("Remotive fetch failed: %s", e)
+
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
         return jobs
 
     @classmethod
-    def fetch_remoteok(cls, keyword: str = "") -> List[Dict[str, Any]]:
-        """Queries RemoteOK API for remote roles."""
-        url = "https://remoteok.com/api"
-        headers = {"User-Agent": "Mozilla/5.0"}
-        jobs: List[Dict[str, Any]] = []
+    def fetch_remoteok(cls, keyword: str = "") -> List[Dict[str, str]]:
+        cache_key = f"agg_remoteok_{keyword.strip().lower()}" if keyword else "agg_remoteok_all"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                return cached[1]
+
+        if keyword:
+            url = f"https://remoteok.com/api?tag={requests.utils.quote(keyword)}"
+        else:
+            url = "https://remoteok.com/api"
+
+        jobs: List[Dict[str, str]] = []
         try:
-            resp = requests.get(url, headers=headers, timeout=9)
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
             if resp.status_code == 200:
                 data = resp.json()
-                for item in data[1:]:
-                    pos = item.get("position", "")
-                    desc = clean_html(item.get("description", ""))
-                    tags = item.get("tags", [])
-                    loc = item.get("location") or "Remote (Worldwide)"
+                if isinstance(data, list) and len(data) > 1:
+                    for item in data[1:]:
+                        if not isinstance(item, dict):
+                            continue
+                        pos = item.get("position", "")
+                        desc = item.get("description", "")
+                        comp = item.get("company") or "Unknown"
+                        loc = item.get("location") or "Remote (Worldwide)"
+                        url_job = item.get("url") or ""
+                        job_id = str(item.get("id") or "")
 
-                    if keyword and keyword.lower() not in f"{pos} {desc} {' '.join(tags)}".lower():
-                        continue
-
-                    if is_eligible_for_india(loc, pos, desc):
-                        jobs.append({
-                            "portal": "RemoteOK",
-                            "company": item.get("company", "Unknown"),
-                            "title": pos,
-                            "location": loc,
-                            "url": item.get("url") or "",
-                            "tags": tags + ["India Eligible"],
-                            "description": desc,
-                            "date_posted": item.get("date", ""),
-                            "eligible_for_india": True,
-                            "source_type": "Aggregator",
-                        })
-                        if len(jobs) >= 25:
-                            break
+                        if is_eligible_for_india(loc, desc, url_job, pos):
+                            jobs.append(
+                                normalize_job(
+                                    id_=job_id,
+                                    title=pos,
+                                    company=comp,
+                                    url=url_job,
+                                    location=loc,
+                                    description=desc,
+                                    portal="RemoteOK",
+                                )
+                            )
+                            if len(jobs) >= 50:
+                                break
         except Exception as e:
             logger.warning("RemoteOK fetch failed: %s", e)
+
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
         return jobs
 
     @classmethod
-    def fetch_all_target_companies(cls, keyword: str = "") -> List[Dict[str, Any]]:
-        """Fetches from all target Greenhouse & Ashby company boards in parallel."""
-        all_company_jobs: List[Dict[str, Any]] = []
+    def fetch_himalayas(cls, keyword: str = "") -> List[Dict[str, str]]:
+        cache_key = "agg_himalayas"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                jobs = cached[1]
+                return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
 
-        with ThreadPoolExecutor(max_workers=10) as executor:
-            future_to_co = {}
-            for gh in cls.TARGET_GREENHOUSE_COMPANIES:
-                future_to_co[executor.submit(cls._fetch_greenhouse_board, gh["name"], gh["board"])] = gh["name"]
-            for ash in cls.TARGET_ASHBY_COMPANIES:
-                future_to_co[executor.submit(cls._fetch_ashby_board, ash["name"], ash["board"])] = ash["name"]
+        url = "https://himalayas.app/jobs/api?country=India"
+        jobs: List[Dict[str, str]] = []
+        try:
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data.get("jobs", []):
+                    title = item.get("title", "")
+                    desc = item.get("description", "")
+                    comp = item.get("companyName") or "Unknown"
+                    loc = item.get("location") or "India (Remote)"
+                    url_job = item.get("applicationLink") or item.get("url") or ""
+                    job_id = str(item.get("id") or item.get("slug") or "")
 
-            for future in as_completed(future_to_co):
-                co_name = future_to_co[future]
-                try:
-                    c_jobs = future.result()
-                    if keyword:
-                        c_jobs = [
-                            j for j in c_jobs
-                            if keyword.lower() in f"{j['title']} {j['company']} {j['description']}".lower()
-                        ]
-                    all_company_jobs.extend(c_jobs)
-                except Exception as exc:
-                    logger.debug("Company %s fetch error: %s", co_name, exc)
+                    if is_eligible_for_india(loc, desc, url_job, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=comp,
+                                url=url_job,
+                                location=loc,
+                                description=desc,
+                                portal="Himalayas",
+                            )
+                        )
+        except Exception as e:
+            logger.warning("Himalayas fetch failed: %s", e)
 
-        return all_company_jobs
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
 
     @classmethod
-    def search(cls, keyword: str, portal: str = "All Sources (India Eligible)", max_total: int = 50) -> List[Dict[str, Any]]:
+    def fetch_arbeitnow(cls, keyword: str = "") -> List[Dict[str, str]]:
+        cache_key = "agg_arbeitnow"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                jobs = cached[1]
+                return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+        url = "https://www.arbeitnow.com/api/job-board-api"
+        jobs: List[Dict[str, str]] = []
+        try:
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code == 200:
+                data = resp.json()
+                for item in data.get("data", []):
+                    title = item.get("title", "")
+                    desc = item.get("description", "")
+                    comp = item.get("company_name") or "Unknown"
+                    is_remote = bool(item.get("remote"))
+                    loc = item.get("location") or ("Remote" if is_remote else "Worldwide")
+                    url_job = item.get("url") or ""
+                    job_id = str(item.get("slug") or "")
+
+                    if is_eligible_for_india(loc, desc, url_job, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=comp,
+                                url=url_job,
+                                location=loc,
+                                description=desc,
+                                portal="Arbeitnow",
+                            )
+                        )
+        except Exception as e:
+            logger.warning("Arbeitnow fetch failed: %s", e)
+
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+    @classmethod
+    def fetch_all_aggregators(cls, keyword: str = "") -> List[Dict[str, str]]:
+        results: List[Dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=5) as executor:
+            futures = [
+                executor.submit(cls.fetch_jobicy, keyword),
+                executor.submit(cls.fetch_remotive, keyword),
+                executor.submit(cls.fetch_remoteok, keyword),
+                executor.submit(cls.fetch_himalayas, keyword),
+                executor.submit(cls.fetch_arbeitnow, keyword),
+            ]
+            for f in as_completed(futures):
+                try:
+                    results.extend(f.result())
+                except Exception as e:
+                    logger.debug("Aggregator error: %s", e)
+        return results
+
+    # ---------------- 5. RSS FEEDS ----------------
+
+    @classmethod
+    def fetch_weworkremotely(cls, keyword: str = "") -> List[Dict[str, str]]:
+        cache_key = "rss_wwr"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                jobs = cached[1]
+                return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+        url = "https://weworkremotely.com/categories/remote-programming-jobs.rss"
+        jobs: List[Dict[str, str]] = []
+        try:
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code == 200:
+                feed = feedparser.parse(resp.content)
+                for entry in feed.entries:
+                    raw_title = getattr(entry, "title", "")
+                    company = "Unknown"
+                    title = raw_title
+                    if ":" in raw_title:
+                        parts = raw_title.split(":", 1)
+                        company = parts[0].strip()
+                        title = parts[1].strip()
+
+                    desc = getattr(entry, "summary", getattr(entry, "description", ""))
+                    link = getattr(entry, "link", "")
+                    job_id = str(getattr(entry, "id", link))
+                    loc = "Worldwide (Remote)"
+
+                    if is_eligible_for_india(loc, desc, link, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=company,
+                                url=link,
+                                location=loc,
+                                description=desc,
+                                portal="WeWorkRemotely",
+                            )
+                        )
+        except Exception as e:
+            logger.warning("WeWorkRemotely RSS fetch failed: %s", e)
+
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+    # Alias for backward compatibility
+    fetch_wwr = fetch_weworkremotely
+
+    @classmethod
+    def fetch_devto(cls, keyword: str = "") -> List[Dict[str, str]]:
+        cache_key = "rss_devto"
+        now = time.time()
+        with _CACHE_LOCK:
+            cached = _IN_MEMORY_CACHE.get(cache_key)
+            if cached and (now - cached[0]) < CACHE_TTL_SECONDS:
+                jobs = cached[1]
+                return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+        url = "https://dev.to/feed/tag/jobs"
+        jobs: List[Dict[str, str]] = []
+        try:
+            resp = requests.get(url, headers=DEFAULT_HEADERS, timeout=DEFAULT_TIMEOUT)
+            if resp.status_code == 200:
+                feed = feedparser.parse(resp.content)
+                for entry in feed.entries:
+                    title = getattr(entry, "title", "")
+                    desc = getattr(entry, "summary", getattr(entry, "description", ""))
+                    comp = getattr(entry, "author", "Dev.to")
+                    link = getattr(entry, "link", "")
+                    job_id = str(getattr(entry, "id", link))
+                    loc = "Remote"
+
+                    if is_eligible_for_india(loc, desc, link, title):
+                        jobs.append(
+                            normalize_job(
+                                id_=job_id,
+                                title=title,
+                                company=comp,
+                                url=link,
+                                location=loc,
+                                description=desc,
+                                portal="Dev.to",
+                            )
+                        )
+        except Exception as e:
+            logger.warning("Dev.to RSS fetch failed: %s", e)
+
+        with _CACHE_LOCK:
+            _IN_MEMORY_CACHE[cache_key] = (now, jobs)
+        return [j for j in jobs if _matches_keyword(j, keyword)] if keyword else jobs
+
+    @classmethod
+    def fetch_all_rss(cls, keyword: str = "") -> List[Dict[str, str]]:
+        results: List[Dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=2) as executor:
+            futures = [
+                executor.submit(cls.fetch_weworkremotely, keyword),
+                executor.submit(cls.fetch_devto, keyword),
+            ]
+            for f in as_completed(futures):
+                try:
+                    results.extend(f.result())
+                except Exception as e:
+                    logger.debug("RSS error: %s", e)
+        return results
+
+    # ---------------- 6. COMBINED TARGET COMPANIES ----------------
+
+    @classmethod
+    def fetch_all_target_companies(cls, keyword: str = "") -> List[Dict[str, str]]:
+        """Fetches from Greenhouse, Ashby, and Lever target companies in parallel."""
+        results: List[Dict[str, str]] = []
+        with ThreadPoolExecutor(max_workers=3) as executor:
+            f_gh = executor.submit(cls.fetch_all_greenhouse, keyword)
+            f_ashby = executor.submit(cls.fetch_all_ashby, keyword)
+            f_lever = executor.submit(cls.fetch_all_lever, keyword)
+
+            for f in as_completed([f_gh, f_ashby, f_lever]):
+                try:
+                    results.extend(f.result())
+                except Exception as e:
+                    logger.debug("Target company gathering error: %s", e)
+        return results
+
+    # ---------------- 7. UNIFIED SEARCH DISPATCHER ----------------
+
+    @classmethod
+    def search(
+        cls,
+        keyword: str = "",
+        portal: str = "All Sources (India Eligible)",
+        max_total: int = 50,
+    ) -> List[Dict[str, str]]:
         """
         Unified search dispatcher across selected portal category or all sources.
-        Guarantees India eligibility filtering across all results.
+        Guarantees India remote eligibility filtering and exact dictionary normalization.
         """
-        keyword = keyword.strip()
+        kw = keyword.strip()
+        p_low = portal.lower().strip()
 
         # Specific Portal Selections
-        if portal == "Himalayas (India)":
-            return cls.fetch_himalayas(keyword)[:max_total]
-        elif portal == "WeWorkRemotely":
-            return cls.fetch_wwr(keyword)[:max_total]
-        elif portal == "Remotive":
-            return cls.fetch_remotive(keyword)[:max_total]
-        elif portal == "RemoteOK":
-            return cls.fetch_remoteok(keyword)[:max_total]
-        elif portal == "Target Companies (GitLab, Supabase, Canonical, Zapier...)":
-            return cls.fetch_all_target_companies(keyword)[:max_total]
+        if "greenhouse" in p_low:
+            jobs = cls.fetch_all_greenhouse(kw)
+        elif "ashby" in p_low:
+            jobs = cls.fetch_all_ashby(kw)
+        elif "lever" in p_low:
+            jobs = cls.fetch_all_lever(kw)
+        elif "target" in p_low:
+            jobs = cls.fetch_all_target_companies(kw)
+        elif "jobicy" in p_low:
+            jobs = cls.fetch_jobicy(kw)
+        elif "himalayas" in p_low:
+            jobs = cls.fetch_himalayas(kw)
+        elif "weworkremotely" in p_low or "wwr" in p_low:
+            jobs = cls.fetch_weworkremotely(kw)
+        elif "remotive" in p_low:
+            jobs = cls.fetch_remotive(kw)
+        elif "remoteok" in p_low:
+            jobs = cls.fetch_remoteok(kw)
+        elif "arbeitnow" in p_low:
+            jobs = cls.fetch_arbeitnow(kw)
+        elif "dev.to" in p_low or "devto" in p_low:
+            jobs = cls.fetch_devto(kw)
+        else:
+            # "All Sources (India Eligible)" — Fetch target companies, aggregators & RSS concurrently
+            combined: List[Dict[str, str]] = []
+            with ThreadPoolExecutor(max_workers=10) as executor:
+                futures = [
+                    executor.submit(cls.fetch_all_target_companies, kw),
+                    executor.submit(cls.fetch_jobicy, kw),
+                    executor.submit(cls.fetch_remotive, kw),
+                    executor.submit(cls.fetch_remoteok, kw),
+                    executor.submit(cls.fetch_himalayas, kw),
+                    executor.submit(cls.fetch_arbeitnow, kw),
+                    executor.submit(cls.fetch_weworkremotely, kw),
+                    executor.submit(cls.fetch_devto, kw),
+                ]
+                for f in as_completed(futures):
+                    try:
+                        combined.extend(f.result())
+                    except Exception as e:
+                        logger.error("Error gathering feed results: %s", e)
+            jobs = combined
 
-        # "All Sources (India Eligible)" — Fetch target companies + aggregators in parallel
-        combined: List[Dict[str, Any]] = []
-        with ThreadPoolExecutor(max_workers=6) as executor:
-            f_targets = executor.submit(cls.fetch_all_target_companies, keyword)
-            f_himalayas = executor.submit(cls.fetch_himalayas, keyword)
-            f_wwr = executor.submit(cls.fetch_wwr, keyword)
-            f_remotive = executor.submit(cls.fetch_remotive, keyword)
-            f_remoteok = executor.submit(cls.fetch_remoteok, keyword)
-
-            for f in as_completed([f_targets, f_himalayas, f_wwr, f_remotive, f_remoteok]):
-                try:
-                    res = f.result()
-                    combined.extend(res)
-                except Exception as e:
-                    logger.error("Error gathering feed results: %s", e)
-
-        # Deduplicate by URL
-        seen_urls = set()
-        deduped = []
-        for j in combined:
-            u = j.get("url") or f"{j.get('company')}_{j.get('title')}"
-            if u not in seen_urls:
-                seen_urls.add(u)
+        # Deduplicate strictly by URL or fallback key
+        seen_keys = set()
+        deduped: List[Dict[str, str]] = []
+        for j in jobs:
+            dedup_key = (j.get("url") or f"{j.get('company')}_{j.get('title')}").strip().lower()
+            if dedup_key and dedup_key not in seen_keys:
+                seen_keys.add(dedup_key)
                 deduped.append(j)
 
         return deduped[:max_total]
