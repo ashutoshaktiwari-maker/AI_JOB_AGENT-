@@ -19,8 +19,8 @@ def test_job_memory():
     assert len(h1) == 64, "SHA256 hex digest should be 64 characters"
     print("[OK] Hash generation passed:", h1[:16] + "...")
 
-    print("\n--- 2. Testing Job Saving & Deduplication ---")
-    test_url = "https://job-boards.greenhouse.io/test/jobs/999888"
+    import time
+    test_url = f"https://job-boards.greenhouse.io/test/jobs/{int(time.time()*1000)}"
     assert not is_job_saved(test_url), "Job should not be saved yet"
 
     job_data = {
