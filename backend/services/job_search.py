@@ -882,3 +882,28 @@ class JobSearchService:
                 deduped.append(j)
 
         return deduped[:max_total]
+
+
+class ZeroLoginJobFetcher:
+    """Convenience multi-keyword job fetcher across zero-login sources."""
+
+    @classmethod
+    def get_all_jobs(
+        cls,
+        keywords: Optional[List[str]] = None,
+        max_per_kw: int = 25,
+    ) -> List[Dict[str, str]]:
+        """Fetches and deduplicates jobs across specified keywords."""
+        target_kws = keywords or ["Python AI", "AI Agent", "LLM", "Automation"]
+        combined: List[Dict[str, str]] = []
+        seen_urls = set()
+
+        for kw in target_kws:
+            jobs = JobSearchService.search(keyword=kw, portal="All Sources (India Eligible)", max_total=max_per_kw)
+            for j in jobs:
+                u = (j.get("url") or f"{j.get('company')}_{j.get('title')}").strip().lower()
+                if u and u not in seen_urls:
+                    seen_urls.add(u)
+                    combined.append(j)
+
+        return combined
