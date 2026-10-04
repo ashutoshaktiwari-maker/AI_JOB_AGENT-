@@ -225,6 +225,19 @@ def get_pending_jobs(limit: int = 20) -> List[Dict[str, Any]]:
         return [dict(row) for row in rows]
 
 
+def get_job_by_hash(job_hash: str) -> Optional[Dict[str, Any]]:
+    """
+    Retrieves a single job record from saved_jobs by job_hash.
+    """
+    if not job_hash:
+        return None
+    with _get_connection() as conn:
+        cursor = conn.cursor()
+        cursor.execute("SELECT * FROM saved_jobs WHERE job_hash = ? LIMIT 1", (job_hash,))
+        row = cursor.fetchone()
+        return dict(row) if row else None
+
+
 class JobMemory:
     """Convenience class wrapper exposing all storage utilities."""
     generate_job_hash = staticmethod(generate_job_hash)
@@ -233,4 +246,5 @@ class JobMemory:
     update_job_assets = staticmethod(update_job_assets)
     mark_job_status = staticmethod(mark_job_status)
     get_pending_jobs = staticmethod(get_pending_jobs)
+    get_job_by_hash = staticmethod(get_job_by_hash)
     init_db = staticmethod(init_db)

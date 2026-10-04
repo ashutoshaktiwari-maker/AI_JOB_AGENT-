@@ -398,6 +398,9 @@ class ZeroLoginSubmitter:
                 context.close()
                 browser.close()
 
+    # Convenience alias matching requirement
+    submit = submit_application
+
 
 # Standalone function
 def submit_job_application(
@@ -417,3 +420,5 @@ def submit_job_application(
         profile_data=profile_data,
         headless=headless,
     )
+
+submit = submit_job_application
