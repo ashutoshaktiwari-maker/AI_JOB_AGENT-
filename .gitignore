@@ -9,6 +9,8 @@ backend/.env.*
 # OAuth Credentials & Tokens
 credentials.json
 token.json
+backend/credentials.json
+backend/token.json
 client_secret*.json
 *.pem
 *.key
@@ -48,6 +50,9 @@ backend/data/*.json
 !backend/data/.gitkeep
 backend/data/*.txt
 !backend/data/.gitkeep
+backend/data/jobs_memory.db
+backend/data/tailored/
+backend/data/tailored/*
 data/
 *.db
 *.sqlite

@@ -16,6 +16,9 @@ uploads/*
 data/
 data/*
 !data/.gitkeep
+data/jobs_memory.db
+data/tailored/
+data/tailored/*
 *.pdf
 
 # Python bytecode & cache
