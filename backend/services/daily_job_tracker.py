@@ -19,9 +19,14 @@ TRACKER_FILE = DATA_DIR / "daily_tracker.json"
 
 DEFAULT_EMAIL = "ashutosh.aktiwari@gmail.com"
 DEFAULT_KEYWORDS = [
+    "GTM Engineer",
+    "Revenue Operations",
+    "Marketing Automation",
+    "Growth Engineer",
+    "RevOps Automation",
+    "Inbound Automation",
     "Python AI",
     "AI Automation",
-    "Prompt Engineer",
     "AI Agents",
     "Workflow Automation",
     "n8n",

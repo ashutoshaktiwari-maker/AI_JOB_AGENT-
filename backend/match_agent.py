@@ -24,16 +24,19 @@ def _extract_skills_from_text(text: str) -> List[str]:
         if skills:
             return skills
 
-    # Fallback to common tech keywords search
+    # Fallback to common tech and GTM/Revenue Automation keywords search
     common_keywords = [
         "Python", "FastAPI", "Django", "Flask", "JavaScript", "TypeScript", "React",
         "Node.js", "SQL", "PostgreSQL", "MySQL", "MongoDB", "Redis", "Docker",
         "Kubernetes", "AWS", "GCP", "Azure", "CI/CD", "Git", "REST APIs", "GraphQL",
         "LLM", "RAG", "Machine Learning", "AI Agents", "Prompt Engineering", "Streamlit",
-        "Pandas", "NumPy", "PyTorch", "TensorFlow", "n8n", "Make.com"
+        "Pandas", "NumPy", "PyTorch", "TensorFlow", "n8n", "Make.com", "Make", "Zapier",
+        "Clay", "Apollo.io", "Apollo", "ZoomInfo", "Clearbit", "HubSpot", "Salesforce",
+        "Marketo", "Customer.io", "Instantly.ai", "Instantly", "Smartlead", "Lemlist",
+        "Webhooks", "Playwright", "LLM orchestration"
     ]
     found = [kw for kw in common_keywords if re.search(rf"\b{re.escape(kw)}\b", text, re.IGNORECASE)]
-    return found
+    return list(dict.fromkeys(found))
 
 
 def _fallback_match(candidate_skills: List[str], candidate_text: str, jd_text: str) -> Dict[str, Any]:

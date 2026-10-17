@@ -96,7 +96,18 @@ except ImportError:
 
 logger = logging.getLogger("antigravity_agent")
 
-DEFAULT_KEYWORDS: List[str] = ["Python AI", "AI Agent", "LLM", "Automation"]
+DEFAULT_KEYWORDS: List[str] = [
+    "GTM Engineer",
+    "Revenue Operations",
+    "Marketing Automation",
+    "Growth Engineer",
+    "RevOps Automation",
+    "Inbound Automation",
+    "Python AI",
+    "AI Agent",
+    "LLM",
+    "Automation",
+]
 MIN_MATCH_THRESHOLD: int = 65
 
 
