@@ -123,14 +123,34 @@ class ATSResumeGenerator:
 
         resume_summary = json.dumps(profile_data, indent=2, ensure_ascii=False)
 
-        prompt = f"""You are an expert ATS (Applicant Tracking System) Resume Strategist.
-Your goal is to tailor the candidate's existing resume to maximize relevance for the target job description.
+        prompt = f"""You are an elite Executive Career Strategist and ATS (Applicant Tracking System) Optimization Architect.
+Your mission is to tailor the candidate's existing resume to rank in the 99th percentile of ATS screening algorithms (Greenhouse, Ashby, Lever, Workday) and immediately impress technical hiring managers.
 
-CRITICAL INTEGRITY INSTRUCTIONS:
-1. NEVER invent, fabricate, or assume any skills, technologies, certifications, job titles, or metrics not already in the Candidate Resume.
-2. ONLY use facts, experiences, projects, and skills explicitly present in the candidate profile.
-3. Reorganize, rephrase for impact (strong action verbs), and prioritize the existing accomplishments that directly match the target job requirements.
-4. Output in clean, ATS-compliant plain text format with clear section headings (SUMMARY, CORE SKILLS, EXPERIENCE, PROJECTS, EDUCATION). No graphics, no columns.
+CRITICAL ATS & INTEGRITY RULES:
+1. ABSOLUTE TRUTH: NEVER invent, fabricate, or hallucinate skills, companies, job titles, or metrics not grounded in the Candidate Resume.
+2. ORGANIC KEYWORD WEAVING (NO KEYWORD STUFFING):
+   - Analyze the target job description and extract relevant domain keywords (e.g., GTM Engineering, Revenue Operations, Marketing/Inbound Automation, Growth Engineering, CRM & Data Sync, Webhook Orchestration, REST APIs, Python, SQL, LLM orchestration, n8n, Make).
+   - Weave these keywords organically and contextually into bullet points and the professional summary where they align with the candidate's actual projects and operational background.
+   - Use natural phrasing and semantic variations—never sound like a robotic AI template or obvious keyword dump.
+3. ANTI-AI PHRASING & HIGH IMPACT:
+   - Eliminate all generic AI buzzwords (e.g., "results-oriented professional with a proven track record", "spearheaded synergies").
+   - Frame every bullet point around concrete technical actions, practical architecture, and business outcomes (Google XYZ format: Accomplished [X] as measured by [Y], by doing [Z]).
+4. CLEAN, PARSER-FRIENDLY ATS STRUCTURE:
+   - Standard single-column plain text format with no markdown tables, columns, or special non-standard unicode characters.
+   - Standard uppercase section headings:
+     [FULL NAME]
+     [CONTACT INFO | LOCATION | LINKEDIN | GITHUB]
+
+     PROFESSIONAL SUMMARY
+
+     CORE SKILLS & TECHNOLOGIES
+
+     PROFESSIONAL EXPERIENCE
+
+     FEATURED PROJECTS
+
+     EDUCATION
+   - Bullet points must use standard '• ' prefix.
 
 Target Job Description:
 {job_description[:3000]}
@@ -150,7 +170,7 @@ EMPHASIZED_SKILLS:
         try:
             raw_response = LLM.generate(
                 prompt=prompt,
-                system="You are a professional ATS resume optimizer. You strictly never invent credentials or skills."
+                system="You are an elite technical ATS resume optimizer. You tailor authentic candidate experience with organic keyword integration and zero fabrication."
             )
 
             # Extract formatted resume text

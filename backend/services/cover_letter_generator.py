@@ -129,18 +129,25 @@ class CoverLetterGenerator:
         resume_context = json.dumps(profile_data, indent=2, ensure_ascii=False)
 
         prompt = f"""You are an executive career advisor and expert cover letter writer.
-Write a compelling, professional, and personalized cover letter tailored specifically to the target job description.
+Write a compelling, authentic, and technically credible cover letter tailored specifically to the target job description.
 
-GUIDELINES:
-1. Candidate Integrity: ONLY reference skills, experiences, and achievements grounded in the candidate's actual profile. NEVER fabricate credentials, metrics, or previous companies.
-2. Value Proposition: Articulate clearly how the candidate's specific background directly solves the requirements and challenges described in the job posting.
-3. Tone: Professional, articulate, confident, and action-oriented. Avoid generic buzzwords.
-4. Structure:
-   - Header with Candidate Name and contact info
+GUIDELINES FOR AN AUTHENTIC, NON-CRAFTED HUMAN VOICE:
+1. AUTHENTIC BUILDER TONE (AVOID AI CLICHÉS):
+   - Sound like an experienced, thoughtful builder and technical operator speaking directly to another engineer or hiring manager.
+   - ABSOLUTELY FORBIDDEN CLICHÉS: Do NOT start with "I am thrilled to apply...", "I am writing with great enthusiasm...", or "As a results-oriented professional...".
+   - Open directly by highlighting immediate technical relevance and problem-solving readiness for {target_role} at {target_company}.
+2. CONTEXTUAL & ORGANIC KEYWORD WEAVING:
+   - Identify the primary domain and tooling required (e.g., GTM Engineering, Revenue Operations, Inbound/Outbound Automation, API & Webhook Integrations, LLM Orchestration, CRM sync).
+   - Weave these concepts in naturally as functional solutions to the team's operational goals—never as a forced list of buzzwords.
+3. GROUNDED STRICTLY IN TRUTH:
+   - ONLY reference skills, technologies, and projects explicitly present in the candidate's actual profile. NEVER fabricate past titles, metrics, or company names.
+4. TIGHT, COMPELLING STRUCTURE (3-4 PARAGRAPHS):
+   - Professional Header with Candidate Name and contact info
    - Addressed to Hiring Team at {target_company}
-   - Opening paragraph stating interest in {target_role} and immediate relevance
-   - 2 concise body paragraphs highlighting specific relevant achievements and tech skills
-   - Strong closing paragraph with call-to-action
+   - Paragraph 1: Direct, punchy hook explaining exact technical fit and immediate value for {target_role}.
+   - Paragraph 2: Tangible engineering/automation implementations (e.g., building autonomous job and email triage pipelines, integrating APIs, webhooks, CRM automation, LLM inference).
+   - Paragraph 3: Alignment with {target_company}'s operational focus and why the candidate is excited to deliver real impact here.
+   - Paragraph 4: Direct, professional closing call-to-action.
    - Professional sign-off
 
 Target Company: {target_company}
@@ -158,7 +165,7 @@ Output ONLY the final formatted cover letter text.
         try:
             raw_letter = LLM.generate(
                 prompt=prompt,
-                system="You are an expert career strategist. Write concise, persuasive cover letters grounded strictly in candidate truth."
+                system="You are an expert technical career strategist. Write concise, persuasive cover letters with an authentic human voice grounded strictly in candidate truth."
             )
 
             letter_text = raw_letter.strip()
