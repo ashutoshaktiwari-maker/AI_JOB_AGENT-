@@ -100,9 +100,12 @@ def test_core_skills_taxonomy():
 
 def test_public_ingestion_endpoints_config():
     print("--- 4. Testing Public Boards Configuration ---")
-    assert BOARDS_CONFIG["greenhouse"] == ["hubspot", "segment", "zapier", "postman", "gitlab", "automattic"]
-    assert BOARDS_CONFIG["ashby"] == ["clay", "apollo", "customerio", "replit", "linear", "deel"]
-    assert BOARDS_CONFIG["lever"] == ["lemlist", "buffer", "kinsta"]
+    for b in ["hubspot", "segment", "zapier", "gitlab", "canonical", "faire", "upstart"]:
+        assert b in BOARDS_CONFIG["greenhouse"], f"Missing {b} in greenhouse boards"
+    for b in ["clay", "apollo", "customerio", "supabase", "notion", "patreon", "1password"]:
+        assert b in BOARDS_CONFIG["ashby"], f"Missing {b} in ashby boards"
+    for b in ["lemlist", "buffer", "kinsta", "verygoodsecurity"]:
+        assert b in BOARDS_CONFIG["lever"], f"Missing {b} in lever boards"
     print("[OK] Public ingestion boards configured properly.")
 
 

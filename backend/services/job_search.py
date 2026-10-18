@@ -24,9 +24,9 @@ CORE_SKILLS_TAXONOMY = {
 
 # 3. Public Ingestion Boards (Strictly Zero-Login)
 BOARDS_CONFIG = {
-    "greenhouse": ["hubspot", "segment", "zapier", "postman", "gitlab", "automattic"],
-    "ashby": ["clay", "apollo", "customerio", "replit", "linear", "deel"],
-    "lever": ["lemlist", "buffer", "kinsta"],
+    "greenhouse": ["hubspot", "segment", "zapier", "postman", "gitlab", "faire", "canonical", "upstart", "block", "remote", "cloudbeds", "bold", "upwork"],
+    "ashby": ["clay", "apollo", "customerio", "replit", "linear", "deel", "quantum", "patreon", "oyster", "supabase", "notion", "float", "1password", "hinge-health", "hubstaff", "hex", "constructor", "miro", "buffer"],
+    "lever": ["lemlist", "buffer", "kinsta", "articulate", "verygoodsecurity"],
 }
 
 LOCATION_ALLOW = ("india", "worldwide", "anywhere", "global", "apac", "remote")
@@ -151,8 +151,7 @@ class JobSearchService:
         except Exception:
             return []
 
-    fetch_himalayas = staticmethod(lambda *a, **k: [])
-    fetch_weworkremotely = staticmethod(lambda *a, **k: [])
+    fetch_himalayas = fetch_weworkremotely = staticmethod(lambda *a, **k: [])
 
     @classmethod
     def fetch_all_sources(cls) -> List[Dict[str, str]]:
