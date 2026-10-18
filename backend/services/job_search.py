@@ -35,6 +35,12 @@ EXCLUDE_PATTERNS = [
     r"\bmust\s+reside\s+in\s+(?:the\s+)?us\b", r"\bus\s+only\b", r"\buk\s+only\b", r"\bcanada\s+only\b"
 ]
 FRICTION_ATS = ("myworkdayjobs.com", "taleo.net", "icims.com")
+SENIOR_PATTERN = r"\b(?:sr\.?|senior)\b"
+
+
+def is_senior_role(title: str = "") -> bool:
+    if not title: return False
+    return bool(re.search(SENIOR_PATTERN, title, flags=re.I))
 
 
 def clean_html(raw_html: Optional[str]) -> str:
@@ -43,8 +49,8 @@ def clean_html(raw_html: Optional[str]) -> str:
     return re.sub(r"\s+", " ", re.sub(r"<[^>]+>", "", text)).strip()
 
 
-def is_eligible_for_india(location: str = "", description: str = "", url: str = "", **kwargs: Any) -> bool:
-    all_texts = [str(x or "") for x in [location, description, url] + list(kwargs.values())]
+def is_eligible_for_india(location: str = "", description: str = "", url: str = "", title: str = "", **kwargs: Any) -> bool:
+    all_texts = [str(x or "") for x in [location, description, url, title] + list(kwargs.values())]
     full = " ".join(all_texts).lower()
     if any(ats in full for ats in FRICTION_ATS) or any(re.search(pat, full) for pat in EXCLUDE_PATTERNS):
         return False
@@ -70,9 +76,11 @@ class JobSearchService:
             if r.status_code != 200: return []
             jobs = []
             for j in r.json().get("jobs", []):
+                t = j.get("title", "")
+                if is_senior_role(t): continue
                 loc, u, desc = (j.get("location") or {}).get("name", "Remote"), j.get("absolute_url", ""), j.get("content", "")
-                if is_eligible_for_india(location=loc, description=desc, url=u):
-                    jobs.append(normalize_job(j.get("id", ""), j.get("title", ""), company, u, loc, desc, f"Greenhouse ({company})"))
+                if is_eligible_for_india(location=loc, description=desc, url=u, title=t):
+                    jobs.append(normalize_job(j.get("id", ""), t, company, u, loc, desc, f"Greenhouse ({company})"))
             return jobs
         except Exception:
             return []
@@ -84,10 +92,12 @@ class JobSearchService:
             if r.status_code != 200: return []
             jobs = []
             for j in r.json().get("jobs", []):
+                t = j.get("title", "")
+                if is_senior_role(t): continue
                 loc, u = j.get("location") or "Remote", j.get("jobUrl", "")
                 desc = j.get("descriptionPlain") or j.get("descriptionHtml") or ""
-                if is_eligible_for_india(location=loc, description=desc, url=u):
-                    jobs.append(normalize_job(j.get("id", ""), j.get("title", ""), company, u, loc, desc, f"Ashby ({company})"))
+                if is_eligible_for_india(location=loc, description=desc, url=u, title=t):
+                    jobs.append(normalize_job(j.get("id", ""), t, company, u, loc, desc, f"Ashby ({company})"))
             return jobs
         except Exception:
             return []
@@ -99,10 +109,12 @@ class JobSearchService:
             if r.status_code != 200: return []
             jobs = []
             for j in r.json():
+                t = j.get("text", "")
+                if is_senior_role(t): continue
                 loc = (j.get("categories") or {}).get("location", "Remote")
                 u, desc = j.get("hostedUrl", ""), j.get("descriptionPlain") or j.get("description", "")
-                if is_eligible_for_india(location=loc, description=desc, url=u):
-                    jobs.append(normalize_job(j.get("id", ""), j.get("text", ""), company, u, loc, desc, f"Lever ({company})"))
+                if is_eligible_for_india(location=loc, description=desc, url=u, title=t):
+                    jobs.append(normalize_job(j.get("id", ""), t, company, u, loc, desc, f"Lever ({company})"))
             return jobs
         except Exception:
             return []
@@ -114,9 +126,11 @@ class JobSearchService:
             if r.status_code != 200: return []
             jobs = []
             for j in r.json().get("jobs", []):
+                t = j.get("jobTitle", "")
+                if is_senior_role(t): continue
                 loc, u, desc = j.get("jobGeo", "Remote"), j.get("url", ""), j.get("jobDescription", "")
-                if is_eligible_for_india(location=loc, description=desc, url=u):
-                    jobs.append(normalize_job(j.get("id", ""), j.get("jobTitle", ""), j.get("companyName", "Jobicy"), u, loc, desc, "Jobicy"))
+                if is_eligible_for_india(location=loc, description=desc, url=u, title=t):
+                    jobs.append(normalize_job(j.get("id", ""), t, j.get("companyName", "Jobicy"), u, loc, desc, "Jobicy"))
             return jobs
         except Exception:
             return []
@@ -128,9 +142,11 @@ class JobSearchService:
             if r.status_code != 200: return []
             jobs = []
             for j in r.json().get("jobs", []):
+                t = j.get("title", "")
+                if is_senior_role(t): continue
                 loc, u, desc = j.get("candidate_required_location", "Remote"), j.get("url", ""), j.get("description", "")
-                if is_eligible_for_india(location=loc, description=desc, url=u):
-                    jobs.append(normalize_job(j.get("id", ""), j.get("title", ""), j.get("company_name", "Remotive"), u, loc, desc, "Remotive"))
+                if is_eligible_for_india(location=loc, description=desc, url=u, title=t):
+                    jobs.append(normalize_job(j.get("id", ""), t, j.get("company_name", "Remotive"), u, loc, desc, "Remotive"))
             return jobs
         except Exception:
             return []
@@ -153,6 +169,7 @@ class JobSearchService:
         jobs, kw = cls.fetch_all_sources(), keyword.lower().strip()
         matched, seen = [], set()
         for j in jobs:
+            if is_senior_role(j.get("title", "")): continue
             text = f"{j['title']} {j['description']}".lower()
             if (not kw or kw in text) and j["url"].lower() not in seen:
                 seen.add(j["url"].lower())
@@ -172,6 +189,7 @@ class ZeroLoginJobFetcher:
         for kw in target_kws:
             kw_l, kw_count = kw.lower().strip(), 0
             for j in all_jobs:
+                if is_senior_role(j.get("title", "")): continue
                 u = j["url"].lower()
                 if (not kw_l or kw_l in f"{j['title']} {j['description']}".lower()) and u not in seen:
                     seen.add(u)

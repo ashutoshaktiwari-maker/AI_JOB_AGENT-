@@ -188,18 +188,18 @@ def mark_job_status(job_hash: str, status: str) -> bool:
                 """
                 UPDATE saved_jobs
                 SET status = ?, applied_at = ?
-                WHERE job_hash = ?
+                WHERE job_hash = ? OR job_hash LIKE ?
                 """,
-                (status_clean, now_iso, job_hash),
+                (status_clean, now_iso, job_hash, f"{job_hash}%"),
             )
         else:
             cursor.execute(
                 """
                 UPDATE saved_jobs
                 SET status = ?
-                WHERE job_hash = ?
+                WHERE job_hash = ? OR job_hash LIKE ?
                 """,
-                (status_clean, job_hash),
+                (status_clean, job_hash, f"{job_hash}%"),
             )
         conn.commit()
         return cursor.rowcount > 0
@@ -227,13 +227,16 @@ def get_pending_jobs(limit: int = 20) -> List[Dict[str, Any]]:
 
 def get_job_by_hash(job_hash: str) -> Optional[Dict[str, Any]]:
     """
-    Retrieves a single job record from saved_jobs by job_hash.
+    Retrieves a single job record from saved_jobs by job_hash or prefix.
     """
     if not job_hash:
         return None
     with _get_connection() as conn:
         cursor = conn.cursor()
-        cursor.execute("SELECT * FROM saved_jobs WHERE job_hash = ? LIMIT 1", (job_hash,))
+        cursor.execute(
+            "SELECT * FROM saved_jobs WHERE job_hash = ? OR job_hash LIKE ? LIMIT 1",
+            (job_hash, f"{job_hash}%"),
+        )
         row = cursor.fetchone()
         return dict(row) if row else None
 

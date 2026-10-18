@@ -31,6 +31,7 @@ from services.job_search import (
     ZeroLoginJobFetcher,
     clean_html,
     is_eligible_for_india,
+    is_senior_role,
     normalize_job,
 )
 
@@ -175,7 +176,7 @@ def test_zero_login_job_fetcher():
     mock_jobs = [
         {
             "id": "1",
-            "title": "Senior GTM Engineer",
+            "title": "GTM Engineer",
             "company": "HubSpot",
             "url": "https://hubspot.com/job/1",
             "location": "Remote",
@@ -196,9 +197,64 @@ def test_zero_login_job_fetcher():
     with patch.object(JobSearchService, "fetch_all_sources", return_value=mock_jobs):
         jobs = ZeroLoginJobFetcher.get_all_jobs(keywords=["GTM Engineer", "Revenue Operations"])
         assert len(jobs) == 2
-        assert jobs[0]["title"] == "Senior GTM Engineer"
+        assert jobs[0]["title"] == "GTM Engineer"
         assert jobs[1]["title"] == "Revenue Operations Automation Lead"
     print("[OK] ZeroLoginJobFetcher successfully tested with mock data.")
+
+
+def test_senior_role_exclusion():
+    print("--- 8. Testing Senior Role Exclusion Filter ---")
+    # 1. Direct regex/function check
+    senior_titles = [
+        "Senior GTM Engineer",
+        "Sr. Revenue Operations Specialist",
+        "Sr Automation Developer",
+        "SR Marketing Automation Engineer",
+        "Senior Python Engineer",
+        "Lead / Senior Growth Engineer",
+    ]
+    for st in senior_titles:
+        assert is_senior_role(st), f"Failed to detect senior role: {st}"
+
+    allowed_titles = [
+        "GTM Engineer",
+        "Junior Marketing Automation Specialist",
+        "Revenue Operations Lead",
+        "Automation Specialist",
+        "Growth Engineer",
+        "Associate Data Engineer",
+    ]
+    for at in allowed_titles:
+        assert not is_senior_role(at), f"False positive on non-senior role: {at}"
+
+    # 2. Integration check: verify senior roles are filtered out during fetch
+    mixed_jobs = [
+        {
+            "id": "1",
+            "title": "Senior GTM Engineer",
+            "company": "HubSpot",
+            "url": "https://hubspot.com/job/1",
+            "location": "Remote",
+            "description": "desc",
+            "portal": "Greenhouse",
+        },
+        {
+            "id": "2",
+            "title": "GTM Engineer",
+            "company": "Apollo",
+            "url": "https://apollo.io/job/2",
+            "location": "Remote",
+            "description": "desc",
+            "portal": "Ashby",
+        },
+    ]
+    with patch.object(JobSearchService, "fetch_all_sources", return_value=mixed_jobs):
+        results = ZeroLoginJobFetcher.get_all_jobs(keywords=["GTM Engineer"])
+        assert len(results) == 1
+        assert results[0]["title"] == "GTM Engineer"
+        assert results[0]["id"] == "2"
+
+    print("[OK] Senior role exclusion verified.")
 
 
 if __name__ == "__main__":
@@ -209,4 +265,5 @@ if __name__ == "__main__":
     test_india_remote_and_friction_ats_filters()
     test_normalization_schema()
     test_zero_login_job_fetcher()
+    test_senior_role_exclusion()
     print("\nALL GTM JOB SEARCH TESTS PASSED SUCCESSFULLY! [SUCCESS]")

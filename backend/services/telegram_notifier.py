@@ -18,6 +18,14 @@ from dotenv import load_dotenv
 
 logger = logging.getLogger(__name__)
 
+try:
+    from services.mock_interview_generator import MockInterviewGenerator
+except ImportError:
+    try:
+        from backend.services.mock_interview_generator import MockInterviewGenerator
+    except ImportError:
+        MockInterviewGenerator = None
+
 # Load environment variables from backend/.env or root .env
 def _load_env() -> None:
     backend_env = Path(__file__).resolve().parent.parent / ".env"
@@ -41,8 +49,8 @@ class TelegramNotifier:
         chat_id: Optional[str] = None,
     ):
         _load_env()
-        self.bot_token = (bot_token or os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
-        self.chat_id = (chat_id or os.getenv("TELEGRAM_CHAT_ID", "")).strip()
+        self.bot_token = (bot_token if bot_token is not None else os.getenv("TELEGRAM_BOT_TOKEN", "")).strip()
+        self.chat_id = (chat_id if chat_id is not None else os.getenv("TELEGRAM_CHAT_ID", "")).strip()
 
     def is_configured(self) -> bool:
         """Returns True if both bot token and chat ID are configured."""
@@ -119,16 +127,19 @@ class TelegramNotifier:
             f"Would you like the AI Agent to apply for this role?"
         )
 
+        # Telegram strictly limits callback_data to 64 bytes.
+        # Shorten 64-char SHA256 to 32 chars so apply:{short_hash} is well within limit (38 bytes).
+        short_hash = job_hash[:32] if job_hash else ""
         reply_markup = {
             "inline_keyboard": [
                 [
                     {
                         "text": "✅ Apply Yes",
-                        "callback_data": f"apply:{job_hash}",
+                        "callback_data": f"apply:{short_hash}",
                     },
                     {
                         "text": "❌ Skip No",
-                        "callback_data": f"skip:{job_hash}",
+                        "callback_data": f"skip:{short_hash}",
                     },
                 ]
             ]
@@ -141,9 +152,11 @@ class TelegramNotifier:
         company: str,
         role: str,
         snippet: str,
+        generate_mock_questions: bool = True,
     ) -> Dict[str, Any]:
         """
         Sends an alert to Telegram that an interview or screening invite was discovered.
+        Automatically generates 10 tailored mock interview practice questions and attaches them.
         """
         clean_snippet = snippet.strip()[:400]
         text = (
@@ -155,7 +168,29 @@ class TelegramNotifier:
             f"⚡ Immediate candidate action recommended!"
         )
 
-        return self._send_message(text=text)
+        mock_prep = None
+        if generate_mock_questions and MockInterviewGenerator:
+            try:
+                mock_prep = MockInterviewGenerator.generate_questions(
+                    company=company,
+                    role=role,
+                    snippet=snippet,
+                    save=True,
+                )
+                if mock_prep and mock_prep.get("telegram_text"):
+                    combined = f"{text}\n\n━━━━━━━━━━━━━━━━━━━━\n{mock_prep['telegram_text']}"
+                    if len(combined) <= 4000:
+                        text = combined
+            except Exception as e:
+                logger.warning("Failed to generate mock interview questions: %s", e)
+
+        res = self._send_message(text=text)
+        if mock_prep:
+            if "file_path" in mock_prep:
+                res["prep_file"] = mock_prep["file_path"]
+            if "full_text" in mock_prep:
+                res["mock_questions"] = mock_prep["full_text"]
+        return res
 
 
 # Standalone function helpers matching the exact requirement signatures
@@ -185,13 +220,16 @@ def send_interview_alert(
     company: str,
     role: str,
     snippet: str,
+    generate_mock_questions: bool = True,
 ) -> Dict[str, Any]:
     """
-    Sends an alert to Telegram that an interview invite was discovered.
+    Sends an alert to Telegram that an interview invite was discovered,
+    along with 10 mock interview practice questions.
     """
     notifier = TelegramNotifier()
     return notifier.send_interview_alert(
         company=company,
         role=role,
         snippet=snippet,
+        generate_mock_questions=generate_mock_questions,
     )
