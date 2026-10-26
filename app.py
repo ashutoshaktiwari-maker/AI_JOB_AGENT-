@@ -326,6 +326,22 @@ menu = st.sidebar.radio(
 st.sidebar.markdown("---")
 st.sidebar.caption("⚡ Powered by Google Gemini & Playwright")
 
+try:
+    _stats = db.get_stats()
+    st.sidebar.markdown(f"""
+    <div style="background: #F8FAFC; border: 1px solid #E2E8F0; border-radius: 10px; padding: 0.75rem; margin-top: 0.75rem;">
+        <div style="font-size: 0.72rem; font-weight: 700; color: #475569; text-transform: uppercase; letter-spacing: 0.05em;">📊 Application Pipeline</div>
+        <div style="font-size: 1.25rem; font-weight: 800; color: #1E293B; margin-top: 2px;">
+            {_stats.get('total', 0)} Positions
+        </div>
+        <div style="font-size: 0.78rem; color: #3B82F6; font-weight: 600; margin-top: 2px;">
+            ✓ {_stats.get('applied', 0)} Submitted & Tracked
+        </div>
+    </div>
+    """, unsafe_allow_html=True)
+except Exception:
+    pass
+
 
 # ==================== 1. UPLOAD RESUME ====================
 if menu == "Upload Resume":
@@ -916,14 +932,23 @@ elif menu == "Tracker":
 
     st.write("")
 
-    f_col, a_col = st.columns([3, 1])
+    f_col, s_col, a_col, sync_col = st.columns([2, 1.8, 1.2, 1.2])
     with f_col:
         filter_status = st.selectbox("Filter Applications by Status", ["All", "Applied", "Interview", "Offer", "Rejected"])
+    with s_col:
+        filter_source = st.selectbox("Application Source", ["All Sources", "🤖 Telegram Agent", "🌐 Web / Manual"])
     with a_col:
         st.write("")
         st.write("")
-        if st.button("➕ Log Manual Application", use_container_width=True):
+        if st.button("➕ Log Manual", use_container_width=True):
             st.session_state["show_manual_modal"] = not st.session_state.get("show_manual_modal", False)
+    with sync_col:
+        st.write("")
+        st.write("")
+        if st.button("🔄 Sync Agent", use_container_width=True, help="Force sync applications from Telegram Agent"):
+            synced = db.sync_from_agent_memory()
+            st.success(f"Synced {synced} new applications!")
+            st.rerun()
 
     if st.session_state.get("show_manual_modal"):
         with st.form("manual_app_form"):
@@ -949,24 +974,37 @@ elif menu == "Tracker":
     status_query = None if filter_status == "All" else filter_status
     applications = db.get_all_applications(status=status_query)
 
+    if filter_source == "🤖 Telegram Agent":
+        applications = [a for a in applications if "telegram" in (a.get("notes") or "").lower()]
+    elif filter_source == "🌐 Web / Manual":
+        applications = [a for a in applications if "telegram" not in (a.get("notes") or "").lower()]
+
     if not applications:
         st.info("No applications found matching the selected filter.")
     else:
         for app in applications:
             curr_status = app.get("status", "Applied")
             status_class = f"status-{curr_status.lower()}"
+            is_tg = "telegram" in (app.get("notes") or "").lower()
+            badge_label = " 🤖 [Telegram Agent]" if is_tg else ""
 
-            with st.expander(f"{app.get('company')} — {app.get('role')}", expanded=False):
+            with st.expander(f"{app.get('company')} — {app.get('role')}{badge_label}", expanded=False):
                 col_left, col_right = st.columns([3, 2], gap="large")
                 with col_left:
                     st.markdown(f'<span class="status-pill {status_class}">{curr_status}</span>', unsafe_allow_html=True)
+                    if is_tg:
+                        st.markdown('<span style="display: inline-block; background: #EEF2FF; color: #4F46E5; font-size: 0.78rem; font-weight: 700; padding: 2px 8px; border-radius: 9999px; margin-left: 6px;">🤖 Applied via Telegram Agent</span>', unsafe_allow_html=True)
                     st.write(f"**Applied Date:** `{app.get('applied_date')}`")
                     if app.get("apply_url"):
                         st.markdown(f"🔗 [View Application / Posting]({app.get('apply_url')})")
                     if app.get("resume_version"):
-                        st.caption(f"Resume Version: {app.get('resume_version')}")
+                        res_name = Path(app.get("resume_version")).name
+                        st.caption(f"Resume: `{res_name}`")
                     if app.get("cover_letter_version"):
-                        st.caption(f"Cover Letter: {app.get('cover_letter_version')}")
+                        cov_name = Path(app.get("cover_letter_version")).name
+                        st.caption(f"Cover Letter: `{cov_name}`")
+                    if is_tg and app.get("notes"):
+                        st.caption(f"📝 {app.get('notes')}")
 
                 with col_right:
                     new_status = st.selectbox(

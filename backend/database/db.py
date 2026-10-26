@@ -16,11 +16,26 @@ DEFAULT_DB_PATH = Path("data/applications.db")
 SCHEMA_PATH = Path(__file__).resolve().parent / "schema.sql"
 
 
+def _resolve_applications_db_path() -> Path:
+    """Resolves applications.db path flexibly regardless of whether running from root or backend/."""
+    candidates = [
+        Path(__file__).resolve().parent.parent.parent / "data" / "applications.db",
+        Path("data/applications.db").resolve(),
+        Path(__file__).resolve().parent.parent / "data" / "applications.db",
+    ]
+    for c in candidates:
+        if c.exists():
+            return c
+    target = Path(__file__).resolve().parent.parent.parent / "data" / "applications.db"
+    target.parent.mkdir(parents=True, exist_ok=True)
+    return target
+
+
 class Database:
     """Manages SQLite database connections and CRUD operations for applications."""
 
-    def __init__(self, db_path: Path = DEFAULT_DB_PATH):
-        self.db_path = db_path
+    def __init__(self, db_path: Optional[Path] = None):
+        self.db_path = Path(db_path) if db_path else _resolve_applications_db_path()
         self.db_path.parent.mkdir(parents=True, exist_ok=True)
         self._init_schema()
 
@@ -38,6 +53,93 @@ class Database:
             with self._get_connection() as conn:
                 conn.executescript(schema_sql)
                 conn.commit()
+
+    def sync_from_agent_memory(self) -> int:
+        """
+        Synchronizes jobs applied or flagged by the Telegram / Autonomous Agent
+        from backend/data/jobs_memory.db into applications.db.
+        Ensures applications made via Telegram are immediately visible on the dashboard.
+        """
+        candidates = [
+            Path(__file__).resolve().parent.parent / "data" / "jobs_memory.db",
+            Path(__file__).resolve().parent.parent.parent / "backend" / "data" / "jobs_memory.db",
+            Path("backend/data/jobs_memory.db").resolve(),
+            Path("data/jobs_memory.db").resolve(),
+        ]
+        mem_path = next((c for c in candidates if c.exists()), None)
+        if not mem_path:
+            return 0
+
+        synced_count = 0
+        try:
+            mem_conn = sqlite3.connect(str(mem_path))
+            mem_conn.row_factory = sqlite3.Row
+            cursor = mem_conn.cursor()
+            cursor.execute(
+                """
+                SELECT job_hash, title, company, location, portal, url,
+                       description, match_score, status, tailored_resume_path,
+                       cover_letter_path, created_at, applied_at
+                FROM saved_jobs
+                WHERE status IN ('applied', 'needs_manual_review')
+                ORDER BY created_at ASC
+                """
+            )
+            rows = cursor.fetchall()
+            mem_conn.close()
+
+            with self._get_connection() as app_conn:
+                app_cursor = app_conn.cursor()
+                for r in rows:
+                    url = (r["url"] or "").strip()
+                    company = (r["company"] or "Unknown Company").strip()
+                    role = (r["title"] or "Target Role").strip()
+                    score = r["match_score"] or 0
+                    j_status = r["status"]
+                    applied_date_raw = r["applied_at"] or r["created_at"] or datetime.now().isoformat()
+                    applied_date = applied_date_raw[:10] if len(applied_date_raw) >= 10 else datetime.now().strftime("%Y-%m-%d")
+
+                    status_val = "Applied"
+                    if j_status == "applied":
+                        notes = f"Applied via Telegram Agent (Match Fit: {score}%)"
+                    else:
+                        notes = f"Needs Review / CAPTCHA (Telegram Agent, Fit: {score}%)"
+
+                    # Check if already in applications table
+                    if url:
+                        app_cursor.execute("SELECT id, status FROM applications WHERE apply_url = ? LIMIT 1", (url,))
+                    else:
+                        app_cursor.execute("SELECT id, status FROM applications WHERE LOWER(company) = LOWER(?) AND LOWER(role) = LOWER(?) LIMIT 1", (company, role))
+
+                    existing = app_cursor.fetchone()
+                    if not existing:
+                        now_str = datetime.now().isoformat()
+                        app_cursor.execute(
+                            """
+                            INSERT INTO applications (
+                                company, role, apply_url, resume_version, cover_letter_version,
+                                status, applied_date, notes, created_at, updated_at
+                            ) VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                            """,
+                            (
+                                company,
+                                role,
+                                url,
+                                r["tailored_resume_path"],
+                                r["cover_letter_path"],
+                                status_val,
+                                applied_date,
+                                notes,
+                                r["created_at"] or now_str,
+                                r["applied_at"] or now_str,
+                            ),
+                        )
+                        synced_count += 1
+                app_conn.commit()
+        except Exception as exc:
+            logger.warning("Error syncing applications from agent memory: %s", exc)
+
+        return synced_count
 
     def add_application(self, app_data: ApplicationCreate) -> Dict[str, Any]:
         """Inserts a new job application record."""
@@ -78,7 +180,8 @@ class Database:
             return dict(row) if row else None
 
     def get_all_applications(self, status: Optional[str] = None) -> List[Dict[str, Any]]:
-        """Lists applications, optionally filtered by status."""
+        """Lists applications, automatically syncing from Telegram agent memory."""
+        self.sync_from_agent_memory()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             if status:
@@ -128,7 +231,8 @@ class Database:
             return cursor.rowcount > 0
 
     def get_stats(self) -> Dict[str, int]:
-        """Calculates breakdown metrics across application statuses."""
+        """Calculates breakdown metrics across application statuses, automatically syncing from Telegram agent memory."""
+        self.sync_from_agent_memory()
         with self._get_connection() as conn:
             cursor = conn.cursor()
             cursor.execute("SELECT status, COUNT(*) as count FROM applications GROUP BY status")

@@ -119,6 +119,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         # Success: Submitted
         if status == "submitted":
             mark_job_status(job_hash, "applied")
+            try:
+                from database.db import db
+                db.sync_from_agent_memory()
+            except Exception as e:
+                logger.warning("Failed to sync application to tracker db: %s", e)
+
             confirmation_text = (
                 f"✅ *Application Successfully Submitted!* 🎉\n\n"
                 f"🏢 *Company:* {company}\n"
@@ -135,6 +141,12 @@ async def handle_callback_query(update: Update, context: ContextTypes.DEFAULT_TY
         # CAPTCHA / Turnstile / Manual Review Paused
         else:
             mark_job_status(job_hash, "needs_manual_review")
+            try:
+                from database.db import db
+                db.sync_from_agent_memory()
+            except Exception as e:
+                logger.warning("Failed to sync application to tracker db: %s", e)
+
             pause_reason = result.get("reason") or "Challenge or manual review required"
             review_text = (
                 f"⚠️ *Manual Review Required*\n\n"
