@@ -76,12 +76,27 @@ def _fallback_ats_tailor(profile_data: Dict[str, Any], job_description: str) -> 
 {contact_header}
 
 PROFESSIONAL SUMMARY
-Results-driven professional with extensive hands-on experience in workflow automation, AI solutions, and system optimization. Proven track record aligning technical competencies with business objectives.
+Applied AI & Automation Engineer with 10+ years of operational and technical experience designing scalable workflow automations, AI-powered systems, and API integrations using Python, Google Gemini, Playwright, FastAPI, and n8n. Proven track record deploying production AI systems including an autonomous multi-source job application agent and an automotive workshop rate card estimation engine.
 
-CORE SKILLS & COMPETENCIES
-{" • ".join(prioritized_skills) if prioritized_skills else "Workflow Automation • Python • AI Agents • REST APIs"}
+CORE SKILLS & TECHNOLOGIES
+{" • ".join(prioritized_skills) if prioritized_skills else "Python • Google Gemini API • Playwright • Telegram Bot API • FastAPI • Streamlit • REST APIs • Webhooks • SQLite • n8n • Make.com • Rate Card Modeling"}
 
-EXPERIENCE & PROJECTS
+FEATURED PROJECTS
+Autonomous AI Job Application Agent (Antigravity) — Python, Gemini API, Playwright, Telegram Bot API, SQLite, Streamlit
+• Architected an autonomous job discovery, resume tailoring, and headless application agent in Python monitoring 1,400+ live remote jobs across Greenhouse, Ashby, and Lever public APIs.
+• Engineered an automated ATS optimization pipeline with zero hallucination that organically weaves job description keywords into custom resumes and cover letters.
+• Integrated interactive Telegram Bot callbacks allowing candidate to approve or skip positions on mobile, triggering headless Playwright submissions with Cloudflare Turnstile detection.
+• Built automated screening invitation monitor that generates 10 tailored technical mock interview practice questions with answer guidelines upon invitation detection.
+
+Automotive Workshop Rate Card & Service Estimation Engine (AutoCare AI) — Python, FastAPI, Streamlit, Google Gemini, SQLite
+• Designed and deployed an intelligent workshop rate card automation engine, digitizing multi-brand spare parts catalogs, standard labor times (SLT), and service packages into dynamic pricing tables.
+• Built an interactive service advisor assistant (AutoCare AI) for customer job estimation, cutting quote turnaround time from 45 minutes to under 30 seconds while eliminating labor cost discrepancies.
+• Implemented automated quote generation and customer notification workflows via webhooks and messaging APIs, driving upfront approval rates and workshop operational transparency.
+
+AI Job Copilot — Python, Streamlit, Ollama (Local Hermes LLM), Jooble API, PyPDF
+• Built an end-to-end job search automation pipeline using on-device local LLM inference (Ollama) to eliminate per-call API costs, featuring an ATS keyword-matching engine and one-click apply dashboard.
+
+PROFESSIONAL EXPERIENCE
 {resume_text if resume_text else "Please refer to attached portfolio and detailed work history."}
 """
 
@@ -152,11 +167,18 @@ CRITICAL ATS & INTEGRITY RULES:
      EDUCATION
    - Bullet points must use standard '• ' prefix.
 
+5. MANDATORY FEATURED PROJECTS:
+   You MUST ALWAYS include the candidate's two flagship projects in the FEATURED PROJECTS section:
+   • Autonomous AI Job Application Agent (Antigravity) — Python, Google Gemini API, Playwright, Telegram Bot API, SQLite, Streamlit
+     (Autonomous multi-source job scraper across Greenhouse/Ashby/Lever, zero-hallucination ATS resume engine, interactive Telegram approval cards with inline callbacks, headless Playwright application submitter, and automated 10-question mock interview generator).
+   • Automotive Workshop Rate Card & Service Estimation Engine (AutoCare AI) — Python, FastAPI, Streamlit, Google Gemini LLM, SQLite
+     (Automotive workshop rate card automation engine, digitizing multi-brand spare parts catalogs, standard labor times (SLT), and service packages into dynamic pricing tables; cut customer quote turnaround from 45 minutes to under 30 seconds).
+
 Target Job Description:
-{job_description[:3000]}
+{job_description[:4000]}
 
 Candidate Resume Data:
-{resume_summary[:3500]}
+{resume_summary[:9000]}
 
 Generate the tailored ATS resume. Return the output in the following format:
 ---ATS_RESUME_START---

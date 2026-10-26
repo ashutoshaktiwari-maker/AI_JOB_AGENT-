@@ -75,7 +75,7 @@ Dear Hiring Team at {company_name},
 
 I am writing to express my strong enthusiasm for the {role_title} role at {company_name}. With my extensive background in operations combined with specialized hands-on expertise in {skills_text}, I am confident in my ability to make an immediate, positive impact on your team.
 
-Throughout my career, I have designed and delivered scalable automation solutions, built AI agent workflows, and integrated enterprise APIs to eliminate inefficiencies and streamline complex operations. My practical experience aligning technical capabilities with real-world business demands enables me to understand requirements quickly and deploy reliable, measurable solutions.
+Throughout my career, I have designed and delivered scalable automation solutions, including an autonomous multi-source AI job application agent (Playwright, Gemini, Telegram Bot API) and an automotive workshop rate card estimation engine (FastAPI, Streamlit, dynamic pricing algorithms). My practical experience aligning technical capabilities with real-world business demands enables me to understand requirements quickly and deploy reliable, measurable solutions.
 
 What excites me most about {company_name} is the opportunity to contribute to high-impact challenges. My hands-on familiarity with {skills_text} positions me well to support your ongoing initiatives and drive engineering excellence.
 
@@ -145,7 +145,10 @@ GUIDELINES FOR AN AUTHENTIC, NON-CRAFTED HUMAN VOICE:
    - Professional Header with Candidate Name and contact info
    - Addressed to Hiring Team at {target_company}
    - Paragraph 1: Direct, punchy hook explaining exact technical fit and immediate value for {target_role}.
-   - Paragraph 2: Tangible engineering/automation implementations (e.g., building autonomous job and email triage pipelines, integrating APIs, webhooks, CRM automation, LLM inference).
+   - Paragraph 2: Tangible engineering/automation implementations—draw directly upon the candidate's real systems:
+     • The Autonomous AI Job Application Agent (event-driven Telegram bot, Playwright headless submission engine, zero-login ATS scraper, automated mock interview generator)
+     • The Automotive Workshop Rate Card & Service Estimation Engine (custom pricing logic, standard labor times, margin safeguards, digitized quotation workflow)
+     • Real-time API, webhook, and CRM integrations (Python, FastAPI, n8n, Make).
    - Paragraph 3: Alignment with {target_company}'s operational focus and why the candidate is excited to deliver real impact here.
    - Paragraph 4: Direct, professional closing call-to-action.
    - Professional sign-off
@@ -154,10 +157,10 @@ Target Company: {target_company}
 Target Role: {target_role}
 
 Target Job Description:
-{job_description[:3000]}
+{job_description[:4000]}
 
 Candidate Resume:
-{resume_context[:3500]}
+{resume_context[:9000]}
 
 Output ONLY the final formatted cover letter text.
 """
